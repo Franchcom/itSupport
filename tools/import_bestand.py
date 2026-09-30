@@ -110,7 +110,7 @@ class Registry:
 
     def add(self, customer, title, category, entries):
         entries = [e for e in entries if e['label'] or e['value']]
-        entries = [e for e in entries if e['value'] or len(entries) == 1]
+        entries = [e for e in entries if e['value'] or e.get('note') or len(entries) == 1]
         if not entries:
             return
         assert category in CATEGORIES, category
@@ -245,7 +245,10 @@ def import_anydesk(reg, ws, cfg):
     c = {k: (col(v) if isinstance(v, str) else [col(x) for x in v]) for k, v in cfg['cols'].items()}
     seen = set()
     count = 0
-    for r, cells in sheet_rows(ws, cfg['first_row'], ws.max_row).items():
+    rows = sheet_rows(ws, cfg['first_row'], ws.max_row)
+    named_ids = {cells[c['anydesk']].replace(' ', '') for cells in rows.values()
+                 if len(cells) > c['anydesk'] and cells[c['name']] and cells[c['anydesk']]}
+    for r, cells in rows.items():
         get = lambda i: cells[i] if i < len(cells) else ''
         name = get(c['name'])
         ad = get(c['anydesk']).replace(' ', '')
@@ -253,7 +256,7 @@ def import_anydesk(reg, ws, cfg):
         pws = [get(i) for i in c['password'] if get(i)]
         if not ad and not tv:
             continue
-        if ad in seen:
+        if ad in seen or (not name and ad in named_ids):
             continue
         seen.add(ad)
         customer, device = cfg.get('fallback', 'Nicht zugeordnet'), name
@@ -287,6 +290,9 @@ def import_o365(reg, ws, cfg):
     domain_map = {k.lower(): v for k, v in cfg.get('domain_map', {}).items()}
     only = {d.lower() for d in cfg['only_domains']} if cfg.get('only_domains') else None
     stop = [re.compile(p) for p in cfg.get('stop_patterns', [])]
+    aliases = [(re.compile(p), d.lower()) for p, d in cfg.get('block_aliases', [])]
+    cost_cols = [col(x) for x in cfg.get('cost_cols', [])]
+    cost_header = [text(ws.cell(row=cfg['cost_header_row'], column=i + 1).value) for i in cost_cols] if cost_cols else []
     blocks = []
     block = None
 
@@ -296,12 +302,13 @@ def import_o365(reg, ws, cfg):
         if a and any(p.search(a) for p in stop):
             block = None
             continue
-        m = DOMAIN_START.match(a) if a and '@' not in a.split()[0] else None
-        if m:
-            domain = m.group(0).lower()
+        alias = next((d for p, d in aliases if a and p.search(a)), None)
+        m = DOMAIN_START.match(a) if a and '@' not in a.split()[0] and not alias else None
+        if m or alias:
+            domain = alias or m.group(0).lower()
             block = {'domain': domain, 'entries': [], 'logins': set(), 'last': None}
             blocks.append(block)
-            rest = a[m.end():].strip(' -–')
+            rest = (a if alias else a[m.end():]).strip(' -–')
             if rest:
                 block['entries'].append(entry('Hinweis', rest))
             a = ''
@@ -342,6 +349,9 @@ def import_o365(reg, ws, cfg):
             block['last']['_aliases'] += [x for x in re.split(r'\s+', get('aliases')) if x]
         elif get('status') and not a:
             E.append(entry('Status', get('status'), secret=False))
+        costs = [(h, cells[i]) for h, i in zip(cost_header, cost_cols) if i < len(cells) and cells[i]]
+        if len(costs) >= 3:
+            E.append(entry('Lizenzkosten', ' · '.join(f'{h}: {v.replace(".", ",")}' for h, v in costs), secret=False))
         tu, tp = get('tenant_user'), get('tenant_pw')
         if tu and (tu, tp) not in block['logins']:
             block['logins'].add((tu, tp))
@@ -360,7 +370,8 @@ def import_o365(reg, ws, cfg):
                 if aliases:
                     parts.append('Aliase: ' + ', '.join(dict.fromkeys(aliases)))
                 e['note'] = ' · '.join(parts)
-        reg.add(customer, f'Microsoft 365 – {b["domain"]}', 'Microsoft 365', b['entries'])
+        suffix = f' ({cfg["title_suffix"]})' if cfg.get('title_suffix') else ''
+        reg.add(customer, f'Microsoft 365 – {b["domain"]}{suffix}', 'Microsoft 365', b['entries'])
         count += 1
     return count
 
