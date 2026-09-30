@@ -1,0 +1,19 @@
+# Kundendaten gehoeren NIE ins Repository - auch nicht verschluesselt.
+*.xlsx
+*.xls
+*.docx
+*.csv
+import/
+tools/zuordnung.json
+itsupport-import*.json
+itsupport-sicherung*.json
+
+# Lokaler Entwicklungsspeicher und Umgebungsvariablen
+.data/
+.env
+.env.*
+.vercel
+
+node_modules/
+*.log
+__pycache__/

@@ -1,0 +1,47 @@
+{
+  "anydesk": [
+    {
+      "file": "*ANYDESK*.xlsx",
+      "sheet": "Tabelle1",
+      "first_row": 3,
+      "cols": { "name": "A", "anydesk": "B", "password": ["C", "D"], "teamviewer": "E" },
+      "map": [
+        ["Muster", "Muster GmbH"],
+        ["Beispiel", "Beispiel & Co"]
+      ],
+      "fallback": "Nicht zugeordnet"
+    }
+  ],
+  "sheets": [
+    {
+      "file": "*Muster_IT.xlsx",
+      "sheet": "Benutzer",
+      "customer": "Muster GmbH",
+      "regions": [
+        { "rows": [1, 20], "mode": "cards", "header_row": 1, "title_cols": ["A"], "category": "Benutzer & Geräte" },
+        { "rows": [22, 40], "mode": "free", "title": "Notizen", "category": "Notizen" },
+        { "rows": [42, 50], "mode": "rows", "header_row": 42, "title": "Backup-Plan", "category": "Backup" },
+        { "rows": [52, 60], "mode": "kv", "title": "Netzwerk", "category": "Netzwerk" }
+      ]
+    }
+  ],
+  "o365": [
+    {
+      "file": "*O365*.xlsx",
+      "sheet": "Alle",
+      "rows": [2, 200],
+      "cols": { "admin": "A", "mailbox": "B", "license": "C", "aliases": "D", "password": "E" },
+      "domain_map": { "muster.at": "Muster GmbH" }
+    }
+  ],
+  "docx": [
+    {
+      "file": "*Beispiel*.docx",
+      "customer": "Beispiel & Co",
+      "title": "Allgemein",
+      "category": "Notizen",
+      "sections": [{ "start": "Router", "title": "Router", "category": "Netzwerk" }]
+    }
+  ],
+  "notes": { "Muster GmbH": "Freitext, der als Kundennotiz übernommen wird." }
+}
