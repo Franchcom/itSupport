@@ -58,6 +58,7 @@ export function handler(methods) {
       send(res, out.status || 200, out.body ?? out);
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.code });
+      if (e.code === 'storage_missing') return send(res, 503, { error: 'storage_missing' });
       console.error(e);
       send(res, 500, { error: 'server' });
     }

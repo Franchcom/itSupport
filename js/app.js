@@ -1069,6 +1069,10 @@ function errorText(e) {
       already_initialized: 'Der Tresor ist bereits eingerichtet.',
       conflict: 'Gleichzeitige Änderung – bitte nochmal versuchen.',
       forbidden: 'Nur für Admins.',
+      storage_missing: 'Die Datenbank ist nicht verbunden. In Vercel unter „Storage“ Upstash mit dem Projekt verbinden und neu deployen.',
+      server: 'Serverfehler. Details stehen in Vercel unter „Logs“.',
+      method_not_allowed: 'Der Server-Teil ist nicht erreichbar (falsche Vercel-Einstellung).',
+      http_404: 'Der Server-Teil ist nicht erreichbar (falsche Vercel-Einstellung).',
     };
     return map[e.code] || `Fehler: ${e.code}`;
   }
@@ -1249,8 +1253,8 @@ async function boot() {
     const st = await api.status();
     if (st.initialized) renderLogin();
     else renderSetup();
-  } catch {
-    renderLogin('Keine Verbindung zum Server.');
+  } catch (e) {
+    renderLogin(errorText(e));
   }
 }
 

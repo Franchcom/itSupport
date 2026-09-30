@@ -99,13 +99,38 @@ function fileStore(path) {
   };
 }
 
+// Findet die Upstash-Zugangsdaten. Vercel legt sie je nach Einrichtung unter
+// KV_REST_API_URL/_TOKEN, UPSTASH_REDIS_REST_URL/_TOKEN oder mit einem
+// eigenen Praefix an (z. B. STORAGE_KV_REST_API_URL).
+export function upstashEnv(env) {
+  for (const [urlKey, tokenKey] of [
+    ['KV_REST_API_URL', 'KV_REST_API_TOKEN'],
+    ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN'],
+  ]) {
+    if (env[urlKey] && env[tokenKey]) return { url: env[urlKey], token: env[tokenKey] };
+  }
+  for (const key of Object.keys(env).sort()) {
+    const m = key.match(/^(.*_)?(KV_REST_API|UPSTASH_REDIS_REST)_URL$/);
+    if (!m) continue;
+    const token = env[key.replace(/_URL$/, '_TOKEN')];
+    if (env[key] && token) return { url: env[key], token };
+  }
+  return null;
+}
+
+export class StorageMissingError extends Error {
+  constructor() {
+    super('Kein Speicher konfiguriert (Upstash-Zugangsdaten fehlen).');
+    this.code = 'storage_missing';
+  }
+}
+
 let store;
 export function getStore() {
   if (store) return store;
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (url && token) store = upstash(url, token);
+  const up = upstashEnv(process.env);
+  if (up) store = upstash(up.url, up.token);
   else if (process.env.KZ_FILE_STORE) store = fileStore(process.env.KZ_FILE_STORE);
-  else throw new Error('Kein Speicher konfiguriert (KV_REST_API_URL/KV_REST_API_TOKEN fehlen).');
+  else throw new StorageMissingError();
   return store;
 }
