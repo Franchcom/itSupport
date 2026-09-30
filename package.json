@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Verschlüsselte Kunden- und Zugangsdaten-App für den IT-Support",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": { "node": "22.x" },
   "scripts": {
     "dev": "node dev-server.mjs",
     "test": "node --test test/*.test.mjs"
