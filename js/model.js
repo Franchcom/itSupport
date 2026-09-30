@@ -1,7 +1,10 @@
 // Datenmodell der Kundendaten (liegt nur entschluesselt im Speicher vor).
 //
 // { schema: 1, customers: [Customer] }
-// Customer = { id, name, note, updatedAt, updatedBy, deleted?, sections: [Section] }
+// Customer = { id, name, note, updatedAt, updatedBy, deleted?, sections: [Section],
+//              attachments: [Attachment], versions: [Version] }
+// Attachment = { id, title, group, mime, w, h, size, createdAt, createdBy }  (Bild liegt als Block)
+// Version    = { id, at, by, savedAt, savedBy, summary: [text] }         (alter Stand liegt als Block)
 // Section  = { id, title, category, entries: [Entry] }
 // Entry    = { id, label, value, secret, kind, note }
 
@@ -36,8 +39,74 @@ export function emptyData() {
   return { schema: 1, customers: [] };
 }
 
+export const MAX_VERSIONS = 50;
+
 export function newCustomer(name, by) {
-  return { id: uid(), name, note: '', sections: [], updatedAt: new Date().toISOString(), updatedBy: by };
+  return { id: uid(), name, note: '', sections: [], attachments: [], versions: [], updatedAt: new Date().toISOString(), updatedBy: by };
+}
+
+// Stand eines Kunden ohne Verlauf, so wie er als Version gespeichert wird.
+export function snapshotOf(c) {
+  const { versions, ...rest } = c;
+  return structuredClone(rest);
+}
+
+function unionVersions(a = [], b = []) {
+  const byId = new Map();
+  for (const v of [...a, ...b]) byId.set(v.id, v);
+  return [...byId.values()].sort((x, y) => (y.savedAt || '').localeCompare(x.savedAt || '')).slice(0, MAX_VERSIONS);
+}
+
+// Was hat sich zwischen zwei Staenden eines Kunden geaendert? Kurze Texte fuer den Verlauf.
+export function diffCustomers(before, after) {
+  const out = [];
+  if (!before || before.deleted) return after && !after.deleted ? ['angelegt bzw. wiederhergestellt'] : [];
+  if (!after || after.deleted) return ['Kunde gelöscht'];
+  if (before.name !== after.name) out.push(`Name: „${before.name}“ → „${after.name}“`);
+  if ((before.note || '') !== (after.note || '')) out.push('Notiz geändert');
+  const flat = (c) => {
+    const m = new Map();
+    for (const s of c.sections || []) for (const e of s.entries) m.set(e.id, { s, e });
+    return m;
+  };
+  const a = flat(before);
+  const b = flat(after);
+  const name = ({ s, e }) => [s.title, e.label].filter(Boolean).join(' – ') || KINDS[e.kind] || 'Eintrag';
+  for (const [id, x] of a) {
+    const y = b.get(id);
+    if (!y) out.push(`entfernt: ${name(x)}`);
+    else if (x.e.value !== y.e.value) out.push(`geändert: ${name(y)}`);
+    else if (x.e.label !== y.e.label || x.e.note !== y.e.note || x.e.secret !== y.e.secret || x.e.kind !== y.e.kind) {
+      out.push(`bearbeitet: ${name(y)}`);
+    }
+  }
+  for (const [id, y] of b) if (!a.has(id)) out.push(`neu: ${name(y)}`);
+  const sa = new Map((before.sections || []).map((s) => [s.id, s]));
+  for (const s of after.sections || []) {
+    const old = sa.get(s.id);
+    if (old && (old.title !== s.title || old.category !== s.category)) out.push(`Bereich umbenannt: ${s.title || 'ohne Titel'}`);
+  }
+  const ia = new Set((before.attachments || []).map((x) => x.id));
+  const ib = new Set((after.attachments || []).map((x) => x.id));
+  const addedImgs = [...ib].filter((x) => !ia.has(x)).length;
+  const removedImgs = [...ia].filter((x) => !ib.has(x)).length;
+  if (addedImgs) out.push(`${addedImgs} Bild(er) hinzugefügt`);
+  if (removedImgs) out.push(`${removedImgs} Bild(er) entfernt`);
+  return out;
+}
+
+// IDs der Eintraege, deren Wert sich gegenueber "current" unterscheidet (fuer die Markierung in alten Versionen).
+export function changedEntryIds(old, current) {
+  const cur = new Map();
+  for (const s of current?.sections || []) for (const e of s.entries) cur.set(e.id, e);
+  const ids = new Set();
+  for (const s of old.sections || []) {
+    for (const e of s.entries) {
+      const c = cur.get(e.id);
+      if (!c || c.value !== e.value || c.label !== e.label) ids.add(e.id);
+    }
+  }
+  return ids;
 }
 
 export function newSection(title = '', category = 'Notizen') {
@@ -61,7 +130,12 @@ export function merge(local, remote) {
   for (const c of remote.customers) byId.set(c.id, c);
   for (const c of local.customers) {
     const r = byId.get(c.id);
-    if (!r || (c.updatedAt || '') > (r.updatedAt || '')) byId.set(c.id, c);
+    if (!r) byId.set(c.id, c);
+    else {
+      const winner = (c.updatedAt || '') > (r.updatedAt || '') ? c : r;
+      // Verlauf beider Seiten behalten, damit keine Version verloren geht.
+      byId.set(c.id, { ...winner, versions: unionVersions(c.versions, r.versions) });
+    }
   }
   return { schema: 1, customers: [...byId.values()] };
 }
@@ -199,6 +273,8 @@ export function applyImport(data, imported, by) {
       id: uid(),
       name,
       note: String(ic.note || ''),
+      attachments: Array.isArray(ic.attachments) ? ic.attachments.filter((a) => a && a.id) : [],
+      versions: [],
       updatedAt: now,
       updatedBy: by,
       sections: (ic.sections || []).map((s) => ({
@@ -218,8 +294,9 @@ export function applyImport(data, imported, by) {
     };
     const idx = result.customers.findIndex((c) => !c.deleted && norm(c.name) === norm(name));
     if (idx >= 0) {
-      // Alte ID behalten, damit das Zusammenfuehren mit anderen Geraeten stimmt.
+      // Alte ID und Verlauf behalten, damit das Zusammenfuehren mit anderen Geraeten stimmt.
       customer.id = result.customers[idx].id;
+      customer.versions = result.customers[idx].versions || [];
       result.customers[idx] = customer;
       replaced++;
     } else {

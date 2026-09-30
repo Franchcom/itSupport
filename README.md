@@ -11,6 +11,9 @@ verlassen. Der Server speichert nur Chiffretext.
 - **Zwei Personen:** Admin und Mitarbeiter, jeweils mit eigenem Master-Passwort. Änderungen werden abgeglichen.
 - **Sicherheitscheck:** zeigt Passwörter, die bei mehreren Kunden vorkommen.
 - **Automatische Sperre** nach Inaktivität und wenn die App länger im Hintergrund ist.
+- **Bilder** pro Kunde (Screenshots, Fotos vom Router-Aufkleber …), verschlüsselt, auch offline verfügbar.
+- **Verlauf:** Jede Änderung hebt den vorherigen Stand auf (bis zu 50 Versionen pro Kunde). Alte Werte ansehen,
+  kopieren oder die ganze Version wiederherstellen. Gelöschte Kunden landen im **Papierkorb**.
 
 ## Sicherheitsmodell
 
@@ -85,7 +88,8 @@ Modi für Tabellenbereiche:
 Passwörter erkennt das Skript an der Spaltenüberschrift (PW, Passwort, Kennwort …) und an ihrer Form.
 In der App lässt sich jeder Eintrag nachträglich auf „geheim“ stellen oder davon befreien.
 
-Nicht importiert werden Bilder, etwa Screenshots aus Word-Dokumenten.
+Eingebettete Bilder aus Excel-Blättern und Word-Dokumenten übernimmt der Abschnitt `images` der
+Zuordnung (mit Titel und Gruppe je Bild); dafür wird zusätzlich `Pillow` gebraucht.
 
 ## Entwicklung
 
@@ -104,5 +108,7 @@ Was nicht veröffentlicht werden soll, steht in `.vercelignore`.
 | `js/model.js`  | Datenmodell, Suche, Zusammenführen, Import |
 | `js/vault.js`  | Sitzung, lokale Kopie, Abgleich mit dem Server |
 | `js/app.js`    | Oberfläche |
-| `api/*.js`            | `status`, `prelogin`, `setup`, `vault`, `users`, `password` |
+| `js/blobstore.js`     | lokaler Speicher (IndexedDB) für verschlüsselte Bilder und Versionen, Upload-Warteschlange |
+| `js/images.js`        | Bilder vor dem Verschlüsseln verkleinern |
+| `api/*.js`            | `status`, `prelogin`, `setup`, `vault`, `users`, `password`, `blob` |
 | `api/_lib/storage.js` | Upstash Redis (Produktion) bzw. JSON-Datei (lokal) |

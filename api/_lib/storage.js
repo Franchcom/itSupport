@@ -4,7 +4,7 @@
 //  - Upstash Redis ueber REST (Produktion auf Vercel)
 //  - eine lokale JSON-Datei (Entwicklung und Tests)
 
-import { readFile, writeFile, rename } from 'node:fs/promises';
+import { readFile, writeFile, rename, mkdir, unlink } from 'node:fs/promises';
 
 const REV_KEY = 'kz:rev';
 const DOC_KEY = 'kz:doc';
@@ -54,6 +54,16 @@ function upstash(url, token) {
     async clearHits(key) {
       await cmd(['DEL', `kz:rl:${key}`]);
     },
+    async getBlob(id) {
+      const v = await cmd(['GET', `kz:blob:${id}`]);
+      return v ? JSON.parse(v) : null;
+    },
+    async putBlob(id, box) {
+      await cmd(['SET', `kz:blob:${id}`, JSON.stringify(box)]);
+    },
+    async delBlob(id) {
+      await cmd(['DEL', `kz:blob:${id}`]);
+    },
   };
 }
 
@@ -95,6 +105,21 @@ function fileStore(path) {
     },
     async clearHits(key) {
       counters.delete(key);
+    },
+    async getBlob(id) {
+      try {
+        return JSON.parse(await readFile(`${path}.blobs/${id}.json`, 'utf8'));
+      } catch (e) {
+        if (e.code === 'ENOENT') return null;
+        throw e;
+      }
+    },
+    async putBlob(id, box) {
+      await mkdir(`${path}.blobs`, { recursive: true });
+      await writeFile(`${path}.blobs/${id}.json`, JSON.stringify(box));
+    },
+    async delBlob(id) {
+      await unlink(`${path}.blobs/${id}.json`).catch(() => {});
     },
   };
 }

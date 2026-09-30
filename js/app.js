@@ -8,6 +8,7 @@ import {
   formatId,
   guessKind,
   liveCustomers,
+  changedEntryIds,
   newCustomer,
   newEntry,
   newSection,
@@ -16,6 +17,7 @@ import {
   search,
 } from './model.js';
 import { UnlockError, forgetDevice, loadCache, setupVault, unlock } from './vault.js';
+import { prepareImage } from './images.js';
 
 const MIN_PASSWORD = 12;
 const REVEAL_MS = 20000;
@@ -82,6 +84,11 @@ const ICONS = {
   go: 'M5 12h13M13 6l6 6-6 6',
   up: 'M6 15l6-6 6 6',
   down: 'M6 9l6 6 6-6',
+  clock: 'M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z',
+  image: 'M4 5h16v14H4zM4 16l4-4 4 4 3-3 5 5M15.5 9.5h.01',
+  restore: 'M3 12a9 9 0 1 0 2.6-6.4M3 4v5h5',
+  left: 'M15 5l-7 7 7 7',
+  right: 'M9 5l7 7-7 7',
 };
 
 function icon(name) {
@@ -127,7 +134,7 @@ async function copy(text, what = 'Kopiert') {
 
 function route() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
-  return { name: parts[0] || '', id: parts[1], sub: parts[2] };
+  return { name: parts[0] || '', id: parts[1], sub: parts[2], vid: parts[3] };
 }
 
 function go(hash) {
@@ -165,6 +172,8 @@ function render() {
   mainEl.replaceChildren();
   if (state.query.trim() && !editing) return renderResults();
   if (r.name === 'k' && r.sub === 'bearbeiten') return renderEdit(r.id);
+  if (r.name === 'k' && r.sub === 'verlauf' && r.vid) return renderVersion(r.id, r.vid);
+  if (r.name === 'k' && r.sub === 'verlauf') return renderHistory(r.id);
   if (r.name === 'neu') return renderEdit(null);
   if (r.name === 'k') return renderCustomer(r.id);
   if (r.name === 'einstellungen') return renderSettings();
@@ -253,7 +262,7 @@ function updatePill() {
 
 // ---------- Eintrag (Anzeige) ----------
 
-function entryRow(c, s, e, { context = false } = {}) {
+function entryRow(c, s, e, { context = false, badge = '' } = {}) {
   const isRemote = e.kind === 'anydesk' || e.kind === 'teamviewer';
   const revealed = state.revealed.has(e.id);
   let valueEl;
@@ -324,7 +333,7 @@ function entryRow(c, s, e, { context = false } = {}) {
           { class: 'entry-ctx', href: `#/k/${c.id}`, onclick: () => clearQuery() },
           [c.name, s.title].filter(Boolean).join(' · '),
         ),
-      label && h('div', { class: 'entry-label' }, label),
+      (label || badge) && h('div', { class: 'entry-label' }, label, badge && h('span', { class: 'badge' }, badge)),
       valueEl,
       e.note && h('div', { class: 'entry-note' }, e.note),
     ),
@@ -411,7 +420,8 @@ function renderHome() {
       { class: 'card' },
       customers.map((c) => {
         const remote = c.sections.reduce((n, s) => n + s.entries.filter((e) => e.kind === 'anydesk').length, 0);
-        const sub = [`${countEntries(c)} Einträge`, remote ? `${remote} AnyDesk` : ''].filter(Boolean).join(' · ');
+        const imgs = (c.attachments || []).length;
+        const sub = [`${countEntries(c)} Einträge`, remote ? `${remote} AnyDesk` : '', imgs ? `${imgs} Bilder` : ''].filter(Boolean).join(' · ');
         return h(
           'a',
           { class: 'list-item', href: `#/k/${c.id}` },
@@ -477,6 +487,11 @@ function renderCustomer(id) {
       { class: 'row-head' },
       h('a', { class: 'btn ghost icon', href: '#/', 'aria-label': 'Zurück' }, icon('back')),
       h('h1', {}, c.name),
+      h(
+        'a',
+        { class: 'btn icon', href: `#/k/${c.id}/verlauf`, 'aria-label': 'Verlauf', title: `Verlauf (${(c.versions || []).length} Versionen)` },
+        icon('clock'),
+      ),
       h('a', { class: 'btn', href: `#/k/${c.id}/bearbeiten` }, icon('edit'), 'Bearbeiten'),
     ),
   );
@@ -484,11 +499,24 @@ function renderCustomer(id) {
 
   const cats = CATEGORIES.filter((cat) => c.sections.some((s) => s.category === cat));
   const others = c.sections.filter((s) => !CATEGORIES.includes(s.category));
-  if (cats.length > 2) {
+  const images = c.attachments || [];
+  if (cats.length > 2 || (cats.length && images.length)) {
     mainEl.append(
       h(
         'nav',
         { class: 'chips' },
+        images.length > 0 &&
+          h(
+            'a',
+            {
+              href: '#',
+              onclick: (ev) => {
+                ev.preventDefault();
+                document.getElementById('cat-bilder')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              },
+            },
+            `Bilder (${images.length})`,
+          ),
         cats.map((cat) =>
           h(
             'a',
@@ -510,7 +538,11 @@ function renderCustomer(id) {
     for (const s of c.sections.filter((x) => x.category === cat)) mainEl.append(sectionCard(c, s));
   }
   for (const s of others) mainEl.append(sectionCard(c, s));
-  if (!c.sections.length) mainEl.append(h('p', { class: 'empty' }, 'Noch keine Einträge. Tippe auf „Bearbeiten“.'));
+  if (images.length) {
+    mainEl.append(h('h2', { class: 'cat', id: 'cat-bilder', style: 'scroll-margin-top:140px' }, `Bilder (${images.length})`));
+    mainEl.append(imageGallery(images));
+  }
+  if (!c.sections.length && !images.length) mainEl.append(h('p', { class: 'empty' }, 'Noch keine Einträge. Tippe auf „Bearbeiten“.'));
   mainEl.append(
     h('p', { class: 'muted small', style: 'margin-top:18px' }, `Zuletzt geändert ${fmtTime(c.updatedAt)}${c.updatedBy ? ` von ${c.updatedBy}` : ''}`),
   );
@@ -523,6 +555,232 @@ function sectionCard(c, s) {
     s.title && h('h3', {}, s.title),
     s.entries.length ? s.entries.map((e) => entryRow(c, s, e)) : h('div', { class: 'entry muted small' }, 'Leer'),
   );
+}
+
+// ---------- Bilder ----------
+
+const imageUrls = new Map();
+
+async function imageURL(att) {
+  if (imageUrls.has(att.id)) return imageUrls.get(att.id);
+  const bytes = await state.session.getBlobBytes(att.id);
+  const url = URL.createObjectURL(new Blob([bytes], { type: att.mime || 'image/jpeg' }));
+  imageUrls.set(att.id, url);
+  return url;
+}
+
+function thumb(att, onClick) {
+  const img = h('img', { alt: att.title || 'Bild', loading: 'lazy' });
+  const box = h('button', { class: 'thumb', type: 'button', onclick: onClick, title: att.title || '' }, img);
+  imageURL(att)
+    .then((url) => (img.src = url))
+    .catch(() => box.append(h('span', { class: 'thumb-missing' }, 'offline nicht verfügbar')));
+  return box;
+}
+
+function imageGallery(images) {
+  const groups = new Map();
+  for (const a of images) {
+    const g = a.group || '';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(a);
+  }
+  const wrap = h('div', { class: 'gallery' });
+  for (const [g, list] of groups) {
+    wrap.append(
+      h(
+        'div',
+        { class: 'card' },
+        g && h('h3', {}, g, h('span', { class: 'muted small' }, `${list.length}`)),
+        h(
+          'div',
+          { class: 'thumbs' },
+          list.map((a) =>
+            h(
+              'figure',
+              {},
+              thumb(a, () => openViewer(images, images.indexOf(a))),
+              a.title && h('figcaption', {}, a.title),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  return wrap;
+}
+
+function openViewer(list, index) {
+  closeViewer();
+  let i = index;
+  const img = h('img', { alt: '' });
+  const caption = h('div', { class: 'viewer-caption' });
+  const stage = h('div', { class: 'viewer-stage', onclick: () => stage.classList.toggle('zoom') }, img);
+  const show = async () => {
+    const a = list[i];
+    caption.textContent = `${a.title || 'Bild'}  ·  ${i + 1}/${list.length}`;
+    stage.classList.remove('zoom');
+    img.removeAttribute('src');
+    try {
+      img.src = await imageURL(a);
+    } catch {
+      caption.textContent += ' – offline nicht verfügbar';
+    }
+  };
+  const nav = (d) => {
+    i = (i + d + list.length) % list.length;
+    show();
+  };
+  const el = h(
+    'div',
+    { class: 'viewer', role: 'dialog', 'aria-modal': 'true' },
+    h(
+      'div',
+      { class: 'viewer-bar' },
+      caption,
+      list.length > 1 && h('button', { class: 'btn ghost icon', 'aria-label': 'Vorheriges', onclick: () => nav(-1) }, icon('left')),
+      list.length > 1 && h('button', { class: 'btn ghost icon', 'aria-label': 'Nächstes', onclick: () => nav(1) }, icon('right')),
+      h('button', { class: 'btn ghost icon', 'aria-label': 'Schließen', onclick: () => closeViewer() }, icon('x')),
+    ),
+    stage,
+    h('div', { class: 'viewer-hint' }, 'Tippen zum Vergrößern'),
+  );
+  el._keys = (ev) => {
+    if (ev.key === 'Escape') closeViewer();
+    if (ev.key === 'ArrowLeft') nav(-1);
+    if (ev.key === 'ArrowRight') nav(1);
+  };
+  addEventListener('keydown', el._keys);
+  document.body.append(el);
+  show();
+}
+
+function closeViewer() {
+  const el = document.querySelector('.viewer');
+  if (!el) return;
+  removeEventListener('keydown', el._keys);
+  el.remove();
+}
+
+// ---------- Verlauf ----------
+
+function renderHistory(id) {
+  const c = findCustomer(id);
+  if (!c) {
+    mainEl.append(h('p', { class: 'empty' }, 'Kunde nicht gefunden.'));
+    return;
+  }
+  const versions = c.versions || [];
+  mainEl.append(
+    h(
+      'div',
+      { class: 'row-head' },
+      h('a', { class: 'btn ghost icon', href: `#/k/${c.id}`, 'aria-label': 'Zurück' }, icon('back')),
+      h('h1', {}, `Verlauf: ${c.name}`),
+    ),
+    h(
+      'p',
+      { class: 'muted' },
+      'Bei jeder Änderung wird der vorherige Stand aufgehoben (bis zu 50 Versionen). Öffne eine Version, um alte Werte anzusehen, zu kopieren oder den ganzen Stand wiederherzustellen.',
+    ),
+    h(
+      'div',
+      { class: 'card' },
+      h(
+        'div',
+        { class: 'list-item' },
+        h(
+          'div',
+          { class: 'grow' },
+          h('div', { class: 'title' }, `Aktueller Stand · ${fmtTime(c.updatedAt)}`),
+          h('div', { class: 'sub' }, c.updatedBy ? `von ${c.updatedBy}` : ''),
+        ),
+      ),
+      versions.map((v) =>
+        h(
+          'a',
+          { class: 'list-item', href: `#/k/${c.id}/verlauf/${v.id}` },
+          h(
+            'div',
+            { class: 'grow' },
+            h('div', { class: 'title' }, `Stand vom ${fmtTime(v.at)}${v.by ? ` · ${v.by}` : ''}`),
+            h('div', { class: 'sub' }, `ersetzt am ${fmtTime(v.savedAt)}${v.savedBy ? ` von ${v.savedBy}` : ''}`),
+            (v.summary || []).length > 0 &&
+              h('div', { class: 'sub' }, `Danach: ${v.summary.join(' · ')}${v.more ? ` · und ${v.more} weitere` : ''}`),
+          ),
+          h('span', { class: 'chev' }, icon('chev')),
+        ),
+      ),
+    ),
+  );
+  if (!versions.length) mainEl.append(h('p', { class: 'empty' }, 'Noch keine früheren Versionen.'));
+}
+
+async function renderVersion(id, vid) {
+  const c = state.session.data.customers.find((x) => x.id === id);
+  const v = c?.versions?.find((x) => x.id === vid);
+  const target = mainEl;
+  if (!c || !v) {
+    target.append(h('p', { class: 'empty' }, 'Version nicht gefunden.'));
+    return;
+  }
+  target.append(h('p', { class: 'muted' }, 'Lade Version …'));
+  let snap;
+  try {
+    snap = await state.session.loadVersion(vid);
+  } catch {
+    if (target !== mainEl || route().vid !== vid) return;
+    target.replaceChildren(h('p', { class: 'empty' }, 'Diese Version ist offline nicht verfügbar. Bitte mit Internet erneut öffnen.'));
+    return;
+  }
+  if (target !== mainEl || route().vid !== vid) return;
+  const changed = changedEntryIds(snap, c.deleted ? null : c);
+  target.replaceChildren(
+    h(
+      'div',
+      { class: 'row-head' },
+      h('a', { class: 'btn ghost icon', href: `#/k/${id}/verlauf`, 'aria-label': 'Zurück' }, icon('back')),
+      h('h1', {}, snap.name),
+    ),
+    h(
+      'div',
+      { class: 'version-banner' },
+      h('div', {}, h('b', {}, `Alte Version: Stand vom ${fmtTime(v.at)}`), v.by ? ` (von ${v.by})` : ''),
+      h('div', { class: 'small' }, 'Einträge, die heute anders lauten, sind mit „anders als jetzt“ markiert.'),
+      h(
+        'button',
+        {
+          class: 'btn primary',
+          onclick: async () => {
+            if (!confirm('Diese Version wiederherstellen? Der aktuelle Stand wird dabei als Version aufgehoben.')) return;
+            try {
+              await state.session.restoreVersion(id, vid);
+              toast('Version wiederhergestellt');
+              go(`#/k/${id}`);
+            } catch {
+              toast('Wiederherstellen fehlgeschlagen – bitte mit Internet erneut versuchen.');
+            }
+          },
+        },
+        icon('restore'),
+        'Diese Version wiederherstellen',
+      ),
+    ),
+  );
+  if (snap.note) target.append(h('div', { class: 'note' }, snap.note));
+  for (const s of snap.sections || []) {
+    target.append(
+      h(
+        'div',
+        { class: 'card' },
+        s.title && h('h3', {}, s.title, h('span', { class: 'muted small' }, s.category)),
+        s.entries.map((e) => entryRow(snap, s, e, { badge: changed.has(e.id) ? 'anders als jetzt' : '' })),
+      ),
+    );
+  }
+  if ((snap.attachments || []).length) {
+    target.append(h('h2', { class: 'cat' }, `Bilder (${snap.attachments.length})`), imageGallery(snap.attachments));
+  }
 }
 
 // ---------- Bearbeiten ----------
@@ -699,6 +957,62 @@ function renderEdit(id) {
     rerender();
   }
 
+  d.attachments ||= [];
+  const fileInput = h('input', {
+    type: 'file',
+    accept: 'image/*',
+    multiple: true,
+    class: 'hidden',
+    onchange: async (ev) => {
+      const files = [...ev.target.files];
+      ev.target.value = '';
+      for (const [i, f] of files.entries()) {
+        toast(`Bild ${i + 1}/${files.length} wird verschlüsselt …`);
+        try {
+          const meta = await state.session.addImage(await prepareImage(f), { title: f.name.replace(/\.[^.]+$/, '') });
+          d.attachments.push(meta);
+        } catch (e) {
+          console.error(e);
+          toast(`„${f.name}“ konnte nicht gelesen werden.`);
+        }
+      }
+      rerender();
+    },
+  });
+  const imgSec = h(
+    'div',
+    { class: 'edit-sec' },
+    h('div', { class: 'sec-title' }, `Bilder (${d.attachments.length})`),
+    d.attachments.map((a, ai) =>
+      h(
+        'div',
+        { class: 'edit-image' },
+        thumb(a, () => openViewer(d.attachments, ai)),
+        h(
+          'div',
+          { class: 'edit-image-fields' },
+          h('input', { class: 'inp', value: a.title || '', placeholder: 'Titel, z. B. Router-Aufkleber', oninput: (ev) => (a.title = ev.target.value) }),
+          h('input', { class: 'inp', value: a.group || '', placeholder: 'Gruppe (optional), z. B. Türsprechanlage', oninput: (ev) => (a.group = ev.target.value) }),
+        ),
+        h(
+          'button',
+          {
+            class: 'btn danger icon',
+            'aria-label': 'Bild entfernen',
+            onclick: () => {
+              d.attachments.splice(ai, 1);
+              rerender();
+            },
+          },
+          icon('trash'),
+        ),
+      ),
+    ),
+    h('div', { class: 'bar', style: 'margin-top:8px' }, h('button', { class: 'btn', onclick: () => fileInput.click() }, icon('image'), 'Bild hinzufügen'), fileInput),
+    h('p', { class: 'muted small' }, 'Am iPhone kannst du auch direkt ein Foto aufnehmen. Entfernte Bilder bleiben im Verlauf erhalten.'),
+  );
+  mainEl.append(imgSec);
+
   mainEl.append(
     h(
       'div',
@@ -758,31 +1072,24 @@ async function saveDraft() {
   const clean = structuredClone(d);
   delete clean._for;
   delete clean._key;
+  clean.attachments = (clean.attachments || []).map((a) => ({ ...a, title: (a.title || '').trim(), group: (a.group || '').trim() }));
   clean.sections = clean.sections
     .map((s) => ({ ...s, title: s.title.trim(), entries: s.entries.filter((e) => e.label.trim() || e.value.trim()) }))
     .filter((s) => s.title || s.entries.length);
-  clean.updatedAt = new Date().toISOString();
-  clean.updatedBy = state.session.user;
-  const data = structuredClone(state.session.data);
-  const idx = data.customers.findIndex((c) => c.id === clean.id);
-  if (idx >= 0) data.customers[idx] = clean;
-  else data.customers.push(clean);
   state.draft = null;
-  await state.session.save(data);
-  toast('Gespeichert');
+  await state.session.commitCustomers([clean]);
+  toast('Gespeichert – der vorherige Stand ist im Verlauf');
   go(`#/k/${clean.id}`);
 }
 
 async function deleteCustomer() {
   const d = state.draft;
-  if (!confirm(`„${d.name}“ mit allen Einträgen löschen? Das kann nicht rückgängig gemacht werden.`)) return;
-  const data = structuredClone(state.session.data);
-  const idx = data.customers.findIndex((c) => c.id === d._for);
-  // Grabstein statt Entfernen, damit das Loeschen auf alle Geraete uebertragen wird.
-  data.customers[idx] = { id: d._for, name: d.name, deleted: true, sections: [], updatedAt: new Date().toISOString(), updatedBy: state.session.user };
+  if (!confirm(`„${d.name}“ löschen?\n\nDer Kunde landet im Papierkorb (Einstellungen) und kann dort wiederhergestellt werden.`)) return;
   state.draft = null;
-  await state.session.save(data);
-  toast('Kunde gelöscht');
+  // Grabstein statt Entfernen, damit das Loeschen auf alle Geraete uebertragen wird;
+  // der letzte Stand bleibt als Version erhalten.
+  await state.session.deleteCustomer(d._for);
+  toast('Kunde in den Papierkorb gelegt');
   go('#/');
 }
 
@@ -968,8 +1275,8 @@ function renderSettings() {
             ? 'Sicherung einspielen? Kunden werden zusammengeführt, neuere Stände gewinnen.'
             : `${n} Kunden importieren? Bestehende Kunden mit gleichem Namen werden ersetzt.`;
         if (!confirm(msg)) return;
-        const r = await s.importFile(obj);
-        toast(`Import fertig: ${r.added} neu, ${r.replaced} ersetzt`);
+        const r = await s.importFile(obj, (i, n) => toast(`Bild ${i}/${n} wird verschlüsselt …`));
+        toast(`Import fertig: ${r.added} neu, ${r.replaced} ersetzt${r.images ? `, ${r.images} Bilder` : ''}. Wird hochgeladen …`);
         go('#/');
       } catch (e) {
         toast(e.message || 'Import fehlgeschlagen');
@@ -993,8 +1300,55 @@ function renderSettings() {
       h(
         'p',
         { class: 'muted small' },
-        'Die Sicherung ist mit dem Tresorschlüssel verschlüsselt und nur zusammen mit einem Master-Passwort dieses Tresors lesbar.',
+        'Die Sicherung enthält alle Kunden, Bilder und Versionen. Sie ist mit dem Tresorschlüssel verschlüsselt und nur zusammen mit einem Master-Passwort dieses Tresors lesbar.',
       ),
+    ),
+  );
+
+  // Papierkorb
+  const trash = s.data.customers
+    .filter((c) => c.deleted && (c.versions || []).length)
+    .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  wrap.append(
+    h(
+      'section',
+      {},
+      h('h2', {}, `Papierkorb (${trash.length})`),
+      trash.length
+        ? h(
+            'div',
+            { class: 'card' },
+            trash.map((c) =>
+              h(
+                'div',
+                { class: 'list-item' },
+                h(
+                  'div',
+                  { class: 'grow' },
+                  h('div', { class: 'title' }, c.name),
+                  h('div', { class: 'sub' }, `gelöscht am ${fmtTime(c.updatedAt)}${c.updatedBy ? ` von ${c.updatedBy}` : ''}`),
+                ),
+                h(
+                  'button',
+                  {
+                    class: 'btn',
+                    onclick: async () => {
+                      try {
+                        await s.restoreVersion(c.id, c.versions[0].id);
+                        toast(`„${c.name}“ wiederhergestellt`);
+                        go(`#/k/${c.id}`);
+                      } catch {
+                        toast('Wiederherstellen fehlgeschlagen – bitte mit Internet erneut versuchen.');
+                      }
+                    },
+                  },
+                  icon('restore'),
+                  'Wiederherstellen',
+                ),
+              ),
+            ),
+          )
+        : h('p', { class: 'muted small' }, 'Gelöschte Kunden landen hier und lassen sich wiederherstellen.'),
     ),
   );
 
@@ -1032,9 +1386,10 @@ function renderSettings() {
         {
           class: 'btn danger',
           style: 'margin-top:10px',
-          onclick: () => {
+          onclick: async () => {
             if (!confirm('Die verschlüsselte Kopie auf diesem Gerät löschen und sperren? Danach ist zum Entsperren eine Verbindung nötig.')) return;
-            forgetDevice();
+            if (s.pending && !confirm('Es gibt noch nicht hochgeladene Änderungen. Trotzdem löschen?')) return;
+            await forgetDevice();
             lock();
           },
         },
@@ -1045,8 +1400,11 @@ function renderSettings() {
   mainEl.append(wrap);
 }
 
-function downloadBackup() {
-  const blob = new Blob([JSON.stringify(state.session.backup())], { type: 'application/json' });
+async function downloadBackup() {
+  const { backup, missing } = await state.session.backup((i, n) => toast(`Sicherung: Block ${i}/${n} …`));
+  if (missing) toast(`${missing} Bilder/Versionen waren offline nicht verfügbar und fehlen in der Sicherung.`);
+  else toast('Sicherung erstellt');
+  const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = h('a', { href: url, download: `itsupport-sicherung-${new Date().toISOString().slice(0, 10)}.json` });
   document.body.append(a);
@@ -1198,9 +1556,14 @@ function startSession(session) {
   lastActive = Date.now();
   mainEl = null;
   render();
+  // Bilder im Hintergrund aufs Geraet holen, damit sie offline verfuegbar sind.
+  setTimeout(() => state.session === session && session.prefetch(), 4000);
 }
 
 function lock(message = '') {
+  closeViewer();
+  for (const url of imageUrls.values()) URL.revokeObjectURL(url);
+  imageUrls.clear();
   state.session?.lock();
   state.session = null;
   state.query = '';
@@ -1231,7 +1594,7 @@ document.addEventListener('visibilitychange', () => {
   hiddenAt = null;
 });
 
-addEventListener('online', () => state.session?.sync());
+addEventListener('online', () => state.session?.sync().then(() => state.session?.prefetch()));
 setInterval(() => {
   if (state.session && document.visibilityState === 'visible') state.session.sync();
 }, 60000);

@@ -76,3 +76,7 @@ export async function makeCredentials(password, rawDataKey) {
   const { kek, authKey } = await deriveKeys(password, salt, KDF_ITER);
   return { salt, iter: KDF_ITER, authKey, wrappedKey: await wrapKey(kek, rawDataKey) };
 }
+
+// Rohdaten (z. B. Bilder) ver-/entschluesseln.
+export const encryptBytes = (key, bytes) => seal(key, bytes);
+export const decryptBytes = (key, box) => open(key, box);

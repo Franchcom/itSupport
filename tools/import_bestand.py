@@ -15,12 +15,16 @@ Das Skript gibt nie Passwoerter aus, nur Zaehler.
 """
 
 import argparse
+import base64
 import datetime as dt
 import glob
+import io
 import json
 import os
+import posixpath
 import re
 import sys
+import zipfile
 
 try:
     import openpyxl
@@ -415,6 +419,92 @@ def import_docx(reg, path, cfg):
         reg.note(cfg['customer'], f'Word-Dokument „{os.path.basename(path)}“ enthält {images} Screenshots, die nicht importiert wurden.')
 
 
+# ------------------------------------------------------------------ Bilder
+
+def xlsx_sheet_images(path, sheet_name):
+    """Eingebettete Bilder eines Tabellenblatts: [(name, zeile, bytes)], nach Zeile sortiert."""
+    z = zipfile.ZipFile(path)
+    read = lambda n: z.read(n).decode('utf-8')
+    rels = lambda n: dict(re.findall(r'Id="([^"]+)"[^>]*Target="([^"]+)"', read(n))) if n in z.namelist() else {}
+    wb = read('xl/workbook.xml')
+    rid = next((r for n, r in re.findall(r'<sheet [^>]*name="([^"]+)"[^>]*r:id="([^"]+)"', wb) if n == sheet_name), None)
+    if not rid:
+        raise SystemExit(f'Blatt „{sheet_name}“ nicht gefunden in {path}')
+    sheet = posixpath.normpath(posixpath.join('xl', rels('xl/_rels/workbook.xml.rels')[rid].lstrip('/').replace('xl/', '', 1)))
+    out = []
+    srels = rels(posixpath.join(posixpath.dirname(sheet), '_rels', posixpath.basename(sheet) + '.rels'))
+    for target in srels.values():
+        if 'drawing' not in target:
+            continue
+        drawing = posixpath.normpath(posixpath.join(posixpath.dirname(sheet), target))
+        drels = rels(posixpath.join(posixpath.dirname(drawing), '_rels', posixpath.basename(drawing) + '.rels'))
+        for anchor in re.findall(r'<xdr:(?:twoCellAnchor|oneCellAnchor)[\s\S]*?</xdr:(?:twoCellAnchor|oneCellAnchor)>', read(drawing)):
+            emb = re.search(r'r:embed="([^"]+)"', anchor)
+            row = re.search(r'<xdr:row>(\d+)</xdr:row>', anchor)
+            if not emb or emb.group(1) not in drels:
+                continue
+            media = posixpath.normpath(posixpath.join(posixpath.dirname(drawing), drels[emb.group(1)]))
+            out.append((posixpath.splitext(posixpath.basename(media))[0], int(row.group(1)) + 1 if row else 0, z.read(media)))
+    return sorted(out, key=lambda x: x[1])
+
+
+def docx_images(path):
+    z = zipfile.ZipFile(path)
+    doc = z.read('word/document.xml').decode('utf-8')
+    rels = dict(re.findall(r'Id="([^"]+)"[^>]*Target="(media/[^"]+)"', z.read('word/_rels/document.xml.rels').decode('utf-8')))
+    out, seen = [], set()
+    for rid in re.findall(r'r:embed="([^"]+)"', doc):
+        if rid in rels and rels[rid] not in seen:
+            seen.add(rels[rid])
+            out.append((posixpath.splitext(posixpath.basename(rels[rid]))[0], 0, z.read('word/' + rels[rid])))
+    return out
+
+
+def compress(data, max_side=2000):
+    """Auf max. 2000 px verkleinern und als JPEG speichern (wie die App)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        sys.exit('Fuer Bilder bitte installieren: pip install pillow')
+    im = Image.open(io.BytesIO(data))
+    if im.mode in ('RGBA', 'LA', 'P'):
+        im = im.convert('RGBA')
+        bg = Image.new('RGB', im.size, 'white')
+        bg.paste(im, mask=im.split()[-1])
+        im = bg
+    else:
+        im = im.convert('RGB')
+    im.thumbnail((max_side, max_side))
+    buf = io.BytesIO()
+    im.save(buf, 'JPEG', quality=85, optimize=True)
+    return buf.getvalue(), im.width, im.height
+
+
+def import_images(reg, path, cfg):
+    found = xlsx_sheet_images(path, cfg['sheet']) if 'sheet' in cfg else docx_images(path)
+    titles = cfg.get('titles', {})
+    groups = cfg.get('groups', {})
+    skip = set(cfg.get('skip', []))
+    customer = reg.get(cfg['customer'])
+    customer.setdefault('attachments', [])
+    n = 0
+    for name, row, data in found:
+        if name in skip:
+            continue
+        jpeg, w, h = compress(data)
+        where = f"{cfg.get('sheet') or os.path.basename(path)}{f', Zeile {row}' if row else ''}"
+        customer['attachments'].append({
+            'title': titles.get(name) or f'Bild aus {where}',
+            'group': groups.get(name, cfg.get('group', '')),
+            'mime': 'image/jpeg',
+            'w': w,
+            'h': h,
+            'data': base64.b64encode(jpeg).decode('ascii'),
+        })
+        n += 1
+    return n
+
+
 # ------------------------------------------------------------------ Start
 
 def find(base, pattern):
@@ -453,6 +543,8 @@ def main():
         stats['M365-Domains'] = stats.get('M365-Domains', 0) + import_o365(reg, sheet(o['file'], o['sheet']), o)
     for d in cfg.get('docx', []):
         import_docx(reg, find(args.quelle, d['file']), d)
+    for im in cfg.get('images', []):
+        stats['Bilder'] = stats.get('Bilder', 0) + import_images(reg, find(args.quelle, im['file']), im)
     for name, line in cfg.get('notes', {}).items():
         reg.note(name, line)
 
@@ -471,6 +563,10 @@ def main():
     except OSError:
         pass
 
+    for c in customers:
+        imgs = len(c.get('attachments', []))
+        if imgs:
+            c['note'] = re.sub(r'Word-Dokument „[^“]*“ enthält \d+ Screenshots, die nicht importiert wurden\.\n?', '', c['note']).strip()
     n_entries = sum(len(s['entries']) for c in customers for s in c['sections'])
     n_secret = sum(e['secret'] for c in customers for s in c['sections'] for e in s['entries'])
     print(f'{len(customers)} Kunden, {n_entries} Einträge ({n_secret} davon geheim) -> {args.ziel}')

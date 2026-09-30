@@ -51,4 +51,7 @@ export const api = {
   putVault: (auth, baseRev, vault) => call('PUT', 'vault', { auth, body: { baseRev, vault } }),
   users: (auth, body) => call('POST', 'users', { auth, body }),
   password: (auth, body) => call('POST', 'password', { auth, body }),
+  getBlob: (auth, id) => call('GET', `blob?id=${id}`, { auth }),
+  putBlob: (auth, id, box) => call('PUT', `blob?id=${id}`, { auth, body: { box } }),
+  deleteBlob: (auth, id) => call('DELETE', `blob?id=${id}`, { auth }),
 };

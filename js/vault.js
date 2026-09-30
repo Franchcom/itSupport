@@ -3,7 +3,12 @@
 
 import * as C from './crypto.js';
 import { api, ApiError } from './api.js';
-import { applyImport, emptyData, merge } from './model.js';
+import { applyImport, diffCustomers, emptyData, merge, MAX_VERSIONS, snapshotOf, uid } from './model.js';
+import { blobs } from './blobstore.js';
+import { base64ToBytes } from './images.js';
+
+const te = new TextEncoder();
+const td = new TextDecoder();
 
 const CACHE_KEY = 'itsupport.cache.v1';
 
@@ -24,12 +29,13 @@ function saveCache(obj) {
   }
 }
 
-export function forgetDevice() {
+export async function forgetDevice() {
   try {
     localStorage.removeItem(CACHE_KEY);
   } catch {
     /* nichts zu tun */
   }
+  await blobs.clear();
 }
 
 export class Session {
@@ -99,6 +105,8 @@ export class Session {
     if (!this.key) return;
     this.setStatus('syncing');
     try {
+      // Zuerst Bilder und Versionen hochladen, auf die der neue Stand verweist.
+      await this.#flushBlobs();
       for (let attempt = 0; attempt < 4; attempt++) {
         if (this.pending) {
           try {
@@ -155,6 +163,127 @@ export class Session {
     this.emit('users');
   }
 
+  // ---------- Datenbloecke: Bilder und alte Versionen ----------
+
+  async putBlob(bytes) {
+    const id = uid();
+    const box = await C.encryptBytes(this.key, bytes);
+    await blobs.put(id, box);
+    await blobs.markPending(id);
+    return id;
+  }
+
+  async #blobBox(id) {
+    let box = await blobs.get(id);
+    if (!box) {
+      box = (await api.getBlob(this.auth, id)).box;
+      await blobs.put(id, box);
+    }
+    return box;
+  }
+
+  async getBlobBytes(id) {
+    return C.decryptBytes(this.key, await this.#blobBox(id));
+  }
+
+  async #flushBlobs() {
+    for (const id of await blobs.pending()) {
+      const box = await blobs.get(id);
+      if (box) await api.putBlob(this.auth, id, box);
+      await blobs.donePending(id);
+    }
+  }
+
+  // Alle Bilder im Hintergrund aufs Geraet holen, damit sie offline da sind.
+  async prefetch() {
+    if (this.prefetching || !this.data) return;
+    this.prefetching = true;
+    try {
+      const have = new Set(await blobs.keys());
+      for (const c of this.data.customers) {
+        for (const a of c.attachments || []) {
+          if (!this.key) return;
+          if (have.has(a.id)) continue;
+          try {
+            await this.#blobBox(a.id);
+          } catch (e) {
+            if (e instanceof ApiError && e.offline) return;
+          }
+        }
+      }
+    } finally {
+      this.prefetching = false;
+    }
+  }
+
+  async addImage(prepared, { title = '', group = '' } = {}) {
+    const id = await this.putBlob(prepared.bytes);
+    return {
+      id,
+      title,
+      group,
+      mime: prepared.mime,
+      w: prepared.w,
+      h: prepared.h,
+      size: prepared.bytes.length,
+      createdAt: new Date().toISOString(),
+      createdBy: this.user,
+    };
+  }
+
+  // ---------- Kunden speichern mit Verlauf ----------
+
+  // Speichert neue Staende von Kunden. Der bisherige Stand jedes Kunden wird
+  // vorher als Version aufgehoben (verschluesselt, als eigener Block).
+  async commitCustomers(updated) {
+    const data = structuredClone(this.data);
+    const now = new Date().toISOString();
+    for (const next of updated) {
+      const idx = data.customers.findIndex((c) => c.id === next.id);
+      const before = idx >= 0 ? data.customers[idx] : null;
+      const after = { ...structuredClone(next), updatedAt: now, updatedBy: this.user };
+      after.versions = structuredClone(before?.versions || next.versions || []);
+      if (before && !before.deleted) {
+        const summary = diffCustomers(before, after);
+        if (!summary.length && idx >= 0) continue;
+        const vid = await this.putBlob(te.encode(JSON.stringify(snapshotOf(before))));
+        after.versions.unshift({
+          id: vid,
+          at: before.updatedAt,
+          by: before.updatedBy,
+          savedAt: now,
+          savedBy: this.user,
+          summary: summary.slice(0, 8),
+          more: Math.max(0, summary.length - 8),
+        });
+        after.versions = after.versions.slice(0, MAX_VERSIONS);
+      }
+      if (idx >= 0) data.customers[idx] = after;
+      else data.customers.push(after);
+    }
+    await this.save(data);
+  }
+
+  async loadVersion(versionId) {
+    return JSON.parse(td.decode(await this.getBlobBytes(versionId)));
+  }
+
+  // Alte Version wiederherstellen. Der aktuelle Stand wird dabei selbst zur Version,
+  // das Wiederherstellen laesst sich also ebenfalls rueckgaengig machen.
+  async restoreVersion(customerId, versionId) {
+    const snap = await this.loadVersion(versionId);
+    const current = this.data.customers.find((c) => c.id === customerId);
+    const next = { ...snap, id: customerId, versions: current?.versions || [] };
+    delete next.deleted;
+    await this.commitCustomers([next]);
+  }
+
+  async deleteCustomer(id) {
+    const c = this.data.customers.find((x) => x.id === id);
+    if (!c) return;
+    await this.commitCustomers([{ id, name: c.name, deleted: true, note: '', sections: [], attachments: [] }]);
+  }
+
   async changePassword(newPassword) {
     const creds = await C.makeCredentials(newPassword, this.rawKey);
     const r = await api.password(this.auth, creds);
@@ -179,19 +308,39 @@ export class Session {
     this.sync();
   }
 
-  // Verschluesselte Sicherung: nur mit einem Master-Passwort dieses Tresors lesbar.
-  backup() {
+  // Verschluesselte Sicherung inkl. Bilder und Versionen: nur mit einem
+  // Master-Passwort dieses Tresors lesbar.
+  async backup(onProgress) {
+    const ids = [];
+    for (const c of this.data.customers) {
+      for (const a of c.attachments || []) ids.push(a.id);
+      for (const v of c.versions || []) ids.push(v.id);
+    }
+    const out = {};
+    let missing = 0;
+    for (let i = 0; i < ids.length; i++) {
+      onProgress?.(i + 1, ids.length);
+      try {
+        out[ids[i]] = await this.#blobBox(ids[i]);
+      } catch {
+        missing++;
+      }
+    }
     return {
-      format: 'itsupport-backup',
-      version: 1,
-      createdAt: new Date().toISOString(),
-      createdBy: this.user,
-      vault: this.vault,
+      backup: {
+        format: 'itsupport-backup',
+        version: 2,
+        createdAt: new Date().toISOString(),
+        createdBy: this.user,
+        vault: this.vault,
+        blobs: out,
+      },
+      missing,
     };
   }
 
   // Nimmt eine Import-Datei (aus tools/import_bestand.py) oder eine Sicherung entgegen.
-  async importFile(obj) {
+  async importFile(obj, onProgress) {
     if (obj && obj.format === 'itsupport-backup') {
       let restored;
       try {
@@ -199,14 +348,40 @@ export class Session {
       } catch {
         throw new Error('Diese Sicherung gehört zu einem anderen Tresor.');
       }
+      for (const [id, box] of Object.entries(obj.blobs || {})) {
+        if (!/^[a-z0-9]{8,32}$/.test(id)) continue;
+        await blobs.put(id, box);
+        await blobs.markPending(id);
+      }
       const before = new Set(this.data.customers.map((c) => c.id));
       const data = merge(this.data, restored);
       await this.save(data);
-      return { added: data.customers.filter((c) => !before.has(c.id)).length, replaced: 0 };
+      return { added: data.customers.filter((c) => !before.has(c.id)).length, replaced: 0, images: 0 };
     }
-    const r = applyImport(this.data, obj, this.user);
-    await this.save(r.data);
-    return r;
+    if (!obj || !Array.isArray(obj.customers)) throw new Error('Keine gültige Import-Datei.');
+    // Mitgelieferte Bilder verschluesseln und als Bloecke ablegen.
+    const total = obj.customers.reduce((n, c) => n + (c.attachments?.length || 0), 0);
+    let done = 0;
+    const customers = [];
+    for (const ic of obj.customers) {
+      const attachments = [];
+      for (const a of ic.attachments || []) {
+        onProgress?.(++done, total);
+        if (!a?.data) continue;
+        const bytes = base64ToBytes(a.data);
+        attachments.push(
+          await this.addImage(
+            { bytes, mime: a.mime || 'image/jpeg', w: a.w || 0, h: a.h || 0 },
+            { title: String(a.title || ''), group: String(a.group || '') },
+          ),
+        );
+      }
+      customers.push({ ...ic, attachments });
+    }
+    const r = applyImport(this.data, { ...obj, customers }, this.user);
+    const changed = r.data.customers.filter((c) => !this.data.customers.includes(c));
+    await this.commitCustomers(changed);
+    return { ...r, images: done };
   }
 
   lock() {

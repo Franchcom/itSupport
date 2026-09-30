@@ -87,3 +87,32 @@ test('Hilfsfunktionen', () => {
   assert.equal(guessKind('Portal', 'https://admin.microsoft.com'), 'url');
   assert.equal(guessKind('NAS', '192.168.0.2:5000'), 'ip');
 });
+
+test('Verlauf: Aenderungen werden beschrieben, geaenderte Eintraege erkannt', async () => {
+  const { diffCustomers, changedEntryIds, snapshotOf } = await import('../js/model.js');
+  const before = sample().customers[0];
+  before.versions = [{ id: 'v1', savedAt: '2026-01-01' }];
+  const after = structuredClone(before);
+  after.sections[0].entries[1].value = 'Neu456!';
+  after.sections[1].entries.push({ id: 'x1', label: 'DNS', value: '8.8.8.8', secret: false, kind: 'ip', note: '' });
+  after.sections[1].entries.splice(0, 1);
+  const d = diffCustomers(before, after);
+  assert.ok(d.includes('geändert: Server – Passwort'));
+  assert.ok(d.includes('neu: Netzwerk – DNS'));
+  assert.ok(d.includes('entfernt: Netzwerk – Gateway'));
+  assert.deepEqual(diffCustomers(before, structuredClone(before)), []);
+  assert.equal(snapshotOf(before).versions, undefined);
+  const ids = changedEntryIds(before, after);
+  assert.ok(ids.has(before.sections[0].entries[1].id));
+  assert.ok(!ids.has(before.sections[0].entries[0].id));
+});
+
+test('Zusammenfuehren behaelt die Versionen beider Geraete', () => {
+  const a = sample();
+  const b = structuredClone(a);
+  a.customers[0].versions = [{ id: 'va', savedAt: '2030-01-02' }];
+  a.customers[0].updatedAt = '2030-01-02';
+  b.customers[0].versions = [{ id: 'vb', savedAt: '2030-01-01' }];
+  const m = merge(a, b);
+  assert.deepEqual(m.customers.find((c) => c.id === a.customers[0].id).versions.map((v) => v.id), ['va', 'vb']);
+});

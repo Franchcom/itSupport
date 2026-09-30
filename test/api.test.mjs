@@ -15,11 +15,11 @@ before(async () => {
   process.env.KZ_FILE_STORE = join(dir, 'store.json');
   process.env.KZ_SETUP_TOKEN = TOKEN;
   const handlers = {};
-  for (const n of ['status', 'prelogin', 'setup', 'vault', 'users', 'password']) {
+  for (const n of ['status', 'prelogin', 'setup', 'vault', 'users', 'password', 'blob']) {
     handlers[n] = (await import(`../api/${n}.js`)).default;
   }
   server = createServer((req, res) => {
-    const name = new URL(req.url, 'http://x').pathname.slice(5);
+    const name = new URL(req.url, 'http://x').pathname.slice(5).replace(/\?.*/, '');
     handlers[name](req, res);
   });
   await new Promise((r) => server.listen(0, r));
@@ -98,7 +98,7 @@ test('kompletter Ablauf: Einrichtung, Anmeldung, Speichern, Konflikt, Mitarbeite
 
 test('Sperre nach zu vielen Fehlversuchen', async () => {
   let last;
-  for (let i = 0; i < 11; i++) last = await call('GET', 'vault', null, { user: 'andreas', key: 'QUFBQQ==' });
+  for (let i = 0; i < 11; i++) last = await call('GET', 'vault', null, { user: 'angreifer', key: 'QUFBQQ==' });
   assert.equal(last.status, 429);
 });
 
@@ -108,4 +108,18 @@ test('E-Mail-Adresse als Benutzername', async () => {
   assert.equal(checkName('andreas'), 'andreas');
   assert.throws(() => checkName('a b@x.at'));
   assert.throws(() => checkName('x@y'));
+});
+
+test('Datenbloecke: nur angemeldet, speichern, lesen, loeschen', async () => {
+  const pre = await call('POST', 'prelogin', { user: 'andreas' });
+  const { authKey } = await C.deriveKeys('admin-passwort-lang', pre.body.salt, pre.body.iter);
+  const auth = { user: 'andreas', key: authKey };
+  const box = { v: 1, iv: 'AAAAAAAAAAAAAAAA', ct: 'QUJD' };
+  assert.equal((await call('PUT', 'blob?id=abcdefgh12', { box })).status, 401);
+  assert.equal((await call('PUT', 'blob?id=../etc', { box }, auth)).status, 400);
+  assert.equal((await call('PUT', 'blob?id=abcdefgh12', { box }, auth)).status, 200);
+  const got = await call('GET', 'blob?id=abcdefgh12', null, auth);
+  assert.deepEqual(got.body.box, box);
+  assert.equal((await call('DELETE', 'blob?id=abcdefgh12', null, auth)).status, 200);
+  assert.equal((await call('GET', 'blob?id=abcdefgh12', null, auth)).status, 404);
 });
