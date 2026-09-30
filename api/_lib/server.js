@@ -79,7 +79,10 @@ export function checkBox(box, maxLen) {
 
 export function checkName(v) {
   const name = typeof v === 'string' ? v.trim().toLowerCase() : '';
-  if (!/^[a-z0-9._-]{2,32}$/.test(name)) throw new HttpError(400, 'invalid_name');
+  // Einfache Namen ("andreas") oder E-Mail-Adressen ("office@firma.at").
+  if (!/^[a-z0-9._+-]{2,64}$/.test(name) && !/^[a-z0-9._+-]{1,64}@[a-z0-9.-]{1,190}\.[a-z]{2,}$/.test(name)) {
+    throw new HttpError(400, 'invalid_name');
+  }
   return name;
 }
 

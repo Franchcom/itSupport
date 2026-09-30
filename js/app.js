@@ -1063,7 +1063,7 @@ function errorText(e) {
       unauthorized: 'Benutzername oder Passwort falsch.',
       too_many_attempts: 'Zu viele Fehlversuche. Bitte 15 Minuten warten.',
       user_exists: 'Diesen Benutzer gibt es schon.',
-      invalid_name: 'Benutzername: 2–32 Zeichen, nur a–z, 0–9, Punkt, Minus, Unterstrich.',
+      invalid_name: 'Benutzername: eine E-Mail-Adresse oder 2–64 Zeichen aus a–z, 0–9, Punkt, Minus, Unterstrich.',
       bad_setup_token: 'Der Einrichtungs-Code stimmt nicht.',
       setup_disabled: 'Einrichtung ist am Server nicht freigeschaltet (KZ_SETUP_TOKEN fehlt).',
       already_initialized: 'Der Tresor ist bereits eingerichtet.',
@@ -1124,7 +1124,7 @@ function renderLogin(message = '') {
           }
         },
       },
-      h('label', { class: 'field' }, h('span', {}, 'Benutzer'), user),
+      h('label', { class: 'field' }, h('span', {}, 'Benutzer / E-Mail'), user),
       h('label', { class: 'field' }, h('span', {}, 'Master-Passwort'), pw),
       err,
       btn,
@@ -1135,7 +1135,7 @@ function renderLogin(message = '') {
 
 function renderSetup() {
   const token = h('input', { autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', required: true });
-  const user = h('input', { autocomplete: 'username', autocapitalize: 'off', value: 'admin', required: true });
+  const user = h('input', { inputmode: 'email', autocomplete: 'username', autocapitalize: 'off', spellcheck: 'false', placeholder: 'office@firma.at', required: true });
   const pw1 = h('input', { type: 'password', autocomplete: 'new-password', required: true });
   const pw2 = h('input', { type: 'password', autocomplete: 'new-password', required: true });
   const err = h('div', { class: 'error' });
@@ -1164,7 +1164,7 @@ function renderSetup() {
         },
       },
       h('label', { class: 'field' }, h('span', {}, 'Einrichtungs-Code (KZ_SETUP_TOKEN aus Vercel)'), token),
-      h('label', { class: 'field' }, h('span', {}, 'Dein Benutzername'), user),
+      h('label', { class: 'field' }, h('span', {}, 'Dein Benutzername oder deine E-Mail-Adresse'), user),
       h('label', { class: 'field' }, h('span', {}, `Master-Passwort (mind. ${MIN_PASSWORD} Zeichen)`), pw1),
       h('label', { class: 'field' }, h('span', {}, 'Wiederholen'), pw2),
       h(

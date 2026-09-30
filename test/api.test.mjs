@@ -101,3 +101,11 @@ test('Sperre nach zu vielen Fehlversuchen', async () => {
   for (let i = 0; i < 11; i++) last = await call('GET', 'vault', null, { user: 'andreas', key: 'QUFBQQ==' });
   assert.equal(last.status, 429);
 });
+
+test('E-Mail-Adresse als Benutzername', async () => {
+  const { checkName } = await import('../api/_lib/server.js');
+  assert.equal(checkName(' Office@Franchcom.at '), 'office@franchcom.at');
+  assert.equal(checkName('andreas'), 'andreas');
+  assert.throws(() => checkName('a b@x.at'));
+  assert.throws(() => checkName('x@y'));
+});
