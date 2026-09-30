@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import * as C from '../public/js/crypto.js';
-import { applyImport, emptyData, merge, reusedSecrets, search, secretTokens, formatId, guessKind } from '../public/js/model.js';
+import * as C from '../js/crypto.js';
+import { applyImport, emptyData, merge, reusedSecrets, search, secretTokens, formatId, guessKind } from '../js/model.js';
 
 test('Schluessel ableiten, verpacken und Daten ver-/entschluesseln', async () => {
   const raw = C.newDataKey();

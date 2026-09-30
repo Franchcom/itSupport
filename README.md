@@ -34,7 +34,7 @@ Datenschlüssel (zufällig, 256 Bit) ──AES-256-GCM──► Kundendaten
 ## Einrichtung auf Vercel (einmalig, etwa 10 Minuten)
 
 1. **Projekt anlegen:** Auf vercel.com *Add New → Project* wählen und dieses Repository importieren.
-   Framework: *Other*. Build- und Output-Einstellungen bleiben leer, sie stehen in `vercel.json`.
+   Framework: *Other*. Build- und Output-Einstellungen bleiben leer.
 2. **Datenbank verbinden:** Im Projekt unter *Storage* (Marketplace) **Upstash for Redis** anlegen
    (der kostenlose Plan reicht) und mit dem Projekt verbinden.
    Dabei werden `KV_REST_API_URL` und `KV_REST_API_TOKEN` automatisch gesetzt.
@@ -94,14 +94,15 @@ npm run dev     # http://localhost:3000, Einrichtungs-Code: dev-setup-token-0000
 npm test        # Verschlüsselung, Suche, Zusammenführen, komplette API
 ```
 
-Es gibt keinen Build-Schritt und keine Abhängigkeiten. Das Frontend ist reines HTML/CSS/JS in `public/`,
-die API besteht aus Vercel-Funktionen in `api/`.
+Es gibt keinen Build-Schritt und keine Abhängigkeiten. Das Frontend ist reines HTML/CSS/JS im Hauptordner
+(`index.html`, `app.css`, `js/`, `icons/`), die API besteht aus Vercel-Funktionen in `api/`.
+Was nicht veröffentlicht werden soll, steht in `.vercelignore`.
 
 | Datei | Inhalt |
 |-------|--------|
-| `public/js/crypto.js` | Schlüsselableitung und Ver-/Entschlüsselung (WebCrypto) |
-| `public/js/model.js`  | Datenmodell, Suche, Zusammenführen, Import |
-| `public/js/vault.js`  | Sitzung, lokale Kopie, Abgleich mit dem Server |
-| `public/js/app.js`    | Oberfläche |
+| `js/crypto.js` | Schlüsselableitung und Ver-/Entschlüsselung (WebCrypto) |
+| `js/model.js`  | Datenmodell, Suche, Zusammenführen, Import |
+| `js/vault.js`  | Sitzung, lokale Kopie, Abgleich mit dem Server |
+| `js/app.js`    | Oberfläche |
 | `api/*.js`            | `status`, `prelogin`, `setup`, `vault`, `users`, `password` |
 | `api/_lib/storage.js` | Upstash Redis (Produktion) bzw. JSON-Datei (lokal) |

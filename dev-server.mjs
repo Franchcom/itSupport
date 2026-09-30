@@ -1,4 +1,4 @@
-// Lokaler Server fuer Entwicklung und Tests: liefert public/ aus und leitet
+// Lokaler Server fuer Entwicklung und Tests: liefert die Web-Dateien aus und leitet
 // /api/* an dieselben Handler wie auf Vercel. Speichert in .data/dev-store.json.
 //
 //   npm run dev            -> http://localhost:3000
@@ -10,7 +10,6 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
-const pub = join(root, 'public');
 process.env.KZ_FILE_STORE ||= join(root, '.data', 'dev-store.json');
 process.env.KZ_SETUP_TOKEN ||= 'dev-setup-token-0000';
 await mkdir(join(root, '.data'), { recursive: true });
@@ -48,8 +47,13 @@ const server = createServer(async (req, res) => {
   }
   let path = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
   if (path.endsWith('/')) path += 'index.html';
+  // Nur die Web-Dateien ausliefern, wie auf Vercel (siehe .vercelignore).
+  if (!/^\/(index\.html|app\.css|sw\.js|manifest\.webmanifest|js\/[\w.-]+\.js|icons\/[\w.-]+)$/.test(path)) {
+    res.statusCode = 404;
+    return res.end('Nicht gefunden');
+  }
   try {
-    const body = await readFile(join(pub, path));
+    const body = await readFile(join(root, path));
     res.setHeader('Content-Type', TYPES[extname(path)] || 'application/octet-stream');
     res.end(body);
   } catch {

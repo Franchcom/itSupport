@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import * as C from '../public/js/crypto.js';
+import * as C from '../js/crypto.js';
 
 let dir, server, base;
 const TOKEN = 'test-setup-token-123456';

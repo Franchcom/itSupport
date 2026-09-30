@@ -1,0 +1,11 @@
+# Nur Web-Dateien und API werden veroeffentlicht.
+README.md
+dev-server.mjs
+test/
+tools/
+.data/
+*.xlsx
+*.docx
+*.json.bak
+itsupport-import*.json
+itsupport-sicherung*.json
