@@ -168,7 +168,7 @@ function render() {
   const r = route();
   const editing = r.name === 'k' && r.sub === 'bearbeiten';
   const searchWrap = app.querySelector('.search');
-  searchWrap.classList.toggle('hidden', editing || r.name === 'einstellungen' || r.name === 'sicherheit');
+  searchWrap.classList.toggle('hidden', editing || r.name === 'einstellungen' || r.name === 'sicherheit' || r.name === 'werkzeug');
   mainEl.replaceChildren();
   if (state.query.trim() && !editing) return renderResults();
   if (r.name === 'k' && r.sub === 'bearbeiten') return renderEdit(r.id);
@@ -178,6 +178,7 @@ function render() {
   if (r.name === 'k') return renderCustomer(r.id);
   if (r.name === 'einstellungen') return renderSettings();
   if (r.name === 'sicherheit') return renderSecurity();
+  if (r.name === 'werkzeug' && r.id === 'anydesk') return renderAnydeskTool();
   return renderHome();
 }
 
@@ -213,6 +214,7 @@ function renderShell() {
     icon('x'),
   );
   mainEl = h('main');
+  topObserver?.disconnect();
   app.replaceChildren(
     h(
       'header',
@@ -242,7 +244,15 @@ function renderShell() {
     mainEl,
   );
   updatePill();
+  // Hoehe der Kopfzeile fuer die angeheftete Kundenleiste bereitstellen.
+  const top = app.querySelector('.top');
+  const setTop = () => document.documentElement.style.setProperty('--top-h', `${top.getBoundingClientRect().height}px`);
+  setTop();
+  topObserver = new ResizeObserver(setTop);
+  topObserver.observe(top);
 }
+
+let topObserver;
 
 function updatePill() {
   if (!pillEl || !state.session) return;
@@ -475,78 +485,125 @@ function clearQuery() {
 
 // ---------- Kundenansicht ----------
 
+// Hinweise wie "Importiert am 30.09.2026." nicht anzeigen.
+function visibleNote(note) {
+  return String(note || '')
+    .split('\n')
+    .filter((l) => !/^Importiert am \d{1,2}\.\d{1,2}\.\d{4}\.?$/.test(l.trim()))
+    .join('\n')
+    .trim();
+}
+
 function renderCustomer(id) {
   const c = findCustomer(id);
   if (!c) {
     mainEl.append(h('p', { class: 'empty' }, 'Kunde nicht gefunden. ', h('a', { href: '#/' }, 'Zur Übersicht')));
     return;
   }
-  mainEl.append(
-    h(
-      'div',
-      { class: 'row-head' },
-      h('a', { class: 'btn ghost icon', href: '#/', 'aria-label': 'Zurück' }, icon('back')),
-      h('h1', {}, c.name),
-      h(
-        'a',
-        { class: 'btn icon', href: `#/k/${c.id}/verlauf`, 'aria-label': 'Verlauf', title: `Verlauf (${(c.versions || []).length} Versionen)` },
-        icon('clock'),
-      ),
-      h('a', { class: 'btn', href: `#/k/${c.id}/bearbeiten` }, icon('edit'), 'Bearbeiten'),
-    ),
-  );
-  if (c.note) mainEl.append(h('div', { class: 'note' }, c.note));
-
   const cats = CATEGORIES.filter((cat) => c.sections.some((s) => s.category === cat));
   const others = c.sections.filter((s) => !CATEGORIES.includes(s.category));
   const images = c.attachments || [];
-  if (cats.length > 2 || (cats.length && images.length)) {
-    mainEl.append(
+
+  // Kapitel fuer die angeheftete Leiste: [id, Beschriftung]
+  const chapters = cats.map((cat) => [`cat-${CATEGORIES.indexOf(cat)}`, cat]);
+  if (images.length) chapters.push(['cat-bilder', `Bilder (${images.length})`]);
+
+  const chipLinks = chapters.map(([cid, label]) =>
+    h(
+      'a',
+      {
+        href: '#',
+        'data-target': cid,
+        onclick: (ev) => {
+          ev.preventDefault();
+          scrollToChapter(cid);
+        },
+      },
+      label,
+    ),
+  );
+
+  // Name, Knoepfe und Kapitel bleiben beim Scrollen oben angeheftet.
+  mainEl.append(
+    h(
+      'div',
+      { class: 'sticky-head' },
       h(
-        'nav',
-        { class: 'chips' },
-        images.length > 0 &&
-          h(
-            'a',
-            {
-              href: '#',
-              onclick: (ev) => {
-                ev.preventDefault();
-                document.getElementById('cat-bilder')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              },
-            },
-            `Bilder (${images.length})`,
-          ),
-        cats.map((cat) =>
-          h(
-            'a',
-            {
-              href: '#',
-              onclick: (ev) => {
-                ev.preventDefault();
-                document.getElementById(`cat-${CATEGORIES.indexOf(cat)}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              },
-            },
-            cat,
-          ),
+        'div',
+        { class: 'row-head' },
+        h('a', { class: 'btn ghost icon', href: '#/', 'aria-label': 'Zurück' }, icon('back')),
+        h('h1', {}, c.name),
+        h(
+          'a',
+          { class: 'btn icon', href: `#/k/${c.id}/verlauf`, 'aria-label': 'Verlauf', title: `Verlauf (${(c.versions || []).length} Versionen)` },
+          icon('clock'),
         ),
+        h('a', { class: 'btn', href: `#/k/${c.id}/bearbeiten`, 'aria-label': 'Bearbeiten' }, icon('edit'), h('span', { class: 'btn-label' }, 'Bearbeiten')),
       ),
-    );
-  }
+      chapters.length > 1 && h('nav', { class: 'chips' }, chipLinks),
+    ),
+  );
+  const note = visibleNote(c.note);
+  if (note) mainEl.append(h('div', { class: 'note' }, note));
+
   for (const cat of cats) {
-    mainEl.append(h('h2', { class: 'cat', id: `cat-${CATEGORIES.indexOf(cat)}`, style: 'scroll-margin-top:140px' }, cat));
+    mainEl.append(h('h2', { class: 'cat', id: `cat-${CATEGORIES.indexOf(cat)}` }, cat));
     for (const s of c.sections.filter((x) => x.category === cat)) mainEl.append(sectionCard(c, s));
   }
   for (const s of others) mainEl.append(sectionCard(c, s));
   if (images.length) {
-    mainEl.append(h('h2', { class: 'cat', id: 'cat-bilder', style: 'scroll-margin-top:140px' }, `Bilder (${images.length})`));
+    mainEl.append(h('h2', { class: 'cat', id: 'cat-bilder' }, `Bilder (${images.length})`));
     mainEl.append(imageGallery(images));
   }
   if (!c.sections.length && !images.length) mainEl.append(h('p', { class: 'empty' }, 'Noch keine Einträge. Tippe auf „Bearbeiten“.'));
   mainEl.append(
     h('p', { class: 'muted small', style: 'margin-top:18px' }, `Zuletzt geändert ${fmtTime(c.updatedAt)}${c.updatedBy ? ` von ${c.updatedBy}` : ''}`),
   );
+  updateActiveChip();
 }
+
+// Hoehe von Kopfzeile + angehefteter Kundenleiste, damit Kapitel nicht darunter verschwinden.
+function stickyOffset() {
+  const top = app.querySelector('.top')?.getBoundingClientRect().height || 0;
+  const head = mainEl?.querySelector('.sticky-head')?.getBoundingClientRect().height || 0;
+  return top + head + 8;
+}
+
+function scrollToChapter(cid) {
+  const el = document.getElementById(cid);
+  if (!el) return;
+  scrollTo({ top: el.getBoundingClientRect().top + scrollY - stickyOffset(), behavior: 'smooth' });
+}
+
+// Markiert in der Kapitelleiste das Kapitel, in dem man gerade ist.
+function updateActiveChip() {
+  const nav = mainEl?.querySelector('.sticky-head .chips');
+  if (!nav) return;
+  const offset = stickyOffset() + 4;
+  let current = null;
+  for (const a of nav.querySelectorAll('a[data-target]')) {
+    const el = document.getElementById(a.dataset.target);
+    if (el && el.getBoundingClientRect().top <= offset) current = a;
+  }
+  if (!current) current = nav.querySelector('a[data-target]');
+  const bottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+  if (bottom) current = [...nav.querySelectorAll('a[data-target]')].pop();
+  for (const a of nav.querySelectorAll('a[data-target]')) a.classList.toggle('on', a === current);
+  current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+let chipFrame = 0;
+addEventListener(
+  'scroll',
+  () => {
+    if (chipFrame) return;
+    chipFrame = requestAnimationFrame(() => {
+      chipFrame = 0;
+      updateActiveChip();
+    });
+  },
+  { passive: true },
+);
 
 function sectionCard(c, s) {
   return h(
@@ -1093,6 +1150,137 @@ async function deleteCustomer() {
   go('#/');
 }
 
+// ---------- Werkzeug: AnyDesk-Passwort fuer alle Geraete ----------
+
+function renderAnydeskTool() {
+  const data = state.session.data;
+  const customers = liveCustomers(data);
+  // Quellen: geheime Eintraege, Kunden mit "Franchcom" im Namen zuerst.
+  const sources = [];
+  const ordered = [...customers].sort((a, b) => /franchcom/i.test(b.name) - /franchcom/i.test(a.name));
+  for (const c of ordered) {
+    for (const sec of c.sections) for (const e of sec.entries) if (e.secret && e.value) sources.push({ c, sec, e });
+  }
+  const groups = new Map();
+  for (const x of sources) {
+    if (!groups.has(x.c.name)) groups.set(x.c.name, []);
+    groups.get(x.c.name).push(x);
+  }
+  const select = h(
+    'select',
+    { class: 'inp' },
+    h('option', { value: '' }, '– Passwort auswählen –'),
+    h('option', { value: 'eigenes' }, 'Eigenes Passwort eingeben …'),
+    [...groups].map(([name, list]) =>
+      h(
+        'optgroup',
+        { label: name },
+        list.map((x) => h('option', { value: x.e.id }, [x.sec.title, x.e.label].filter(Boolean).join(' – ') || 'Passwort')),
+      ),
+    ),
+  );
+  const own = h('input', { class: 'inp mono hidden', type: 'text', autocomplete: 'off', placeholder: 'Passwort' });
+  const labelInp = h('input', { class: 'inp', value: 'AnyDesk-Passwort' });
+  const overwrite = h('input', { type: 'checkbox' });
+  const preview = h('p', { class: 'muted' });
+  const isTarget = (e, label) => e.label.trim().toLowerCase() === label.trim().toLowerCase();
+
+  const plan = () => {
+    const label = labelInp.value.trim() || 'AnyDesk-Passwort';
+    let add = 0;
+    let update = 0;
+    let keep = 0;
+    const devices = new Set();
+    for (const c of customers) {
+      for (const sec of c.sections) {
+        if (!sec.entries.some((e) => e.kind === 'anydesk' && e.value)) continue;
+        devices.add(sec.id);
+        const existing = sec.entries.find((e) => isTarget(e, label));
+        if (!existing) add++;
+        else if (overwrite.checked) update++;
+        else keep++;
+      }
+    }
+    return { label, add, update, keep, devices: devices.size };
+  };
+  const value = () => {
+    if (select.value === 'eigenes') return own.value;
+    return sources.find((x) => x.e.id === select.value)?.e.value || '';
+  };
+  const refresh = () => {
+    own.classList.toggle('hidden', select.value !== 'eigenes');
+    const p = plan();
+    preview.textContent =
+      `${p.devices} AnyDesk-Geräte: bei ${p.add} wird „${p.label}“ neu eingetragen` +
+      (p.update ? `, bei ${p.update} überschrieben` : '') +
+      (p.keep ? `, ${p.keep} haben schon eins und bleiben unverändert` : '') +
+      '.';
+  };
+  select.onchange = refresh;
+  labelInp.oninput = refresh;
+  overwrite.onchange = refresh;
+  refresh();
+
+  mainEl.append(
+    h(
+      'div',
+      { class: 'row-head' },
+      h('a', { class: 'btn ghost icon', href: '#/einstellungen', 'aria-label': 'Zurück' }, icon('back')),
+      h('h1', {}, 'AnyDesk-Passwort eintragen'),
+    ),
+    h(
+      'div',
+      { class: 'settings' },
+      h(
+        'section',
+        {},
+        h('p', { class: 'muted small' }, 'Trägt ein Passwort bei jedem Gerät ein, das eine AnyDesk-ID hat – direkt unter der ID. Jede Änderung landet im Verlauf des Kunden und lässt sich dort rückgängig machen.'),
+        h('label', { class: 'field' }, h('span', {}, 'Welches Passwort?'), select),
+        own,
+        h('label', { class: 'field', style: 'margin-top:12px' }, h('span', {}, 'Bezeichnung des Eintrags'), labelInp),
+        h('label', { class: 'check' }, overwrite, 'Vorhandene Einträge mit dieser Bezeichnung überschreiben'),
+        preview,
+        h(
+          'button',
+          {
+            class: 'btn primary',
+            onclick: async () => {
+              const v = value();
+              if (!v) return toast('Bitte zuerst ein Passwort auswählen.');
+              const p = plan();
+              if (!p.add && !p.update) return toast('Es gibt nichts einzutragen.');
+              if (!confirm(`Bei ${p.add + p.update} AnyDesk-Geräten „${p.label}“ eintragen?`)) return;
+              const changed = [];
+              for (const c of customers) {
+                const next = structuredClone(c);
+                let touched = false;
+                for (const sec of next.sections) {
+                  const idx = sec.entries.findIndex((e) => e.kind === 'anydesk' && e.value);
+                  if (idx < 0) continue;
+                  const existing = sec.entries.find((e) => isTarget(e, p.label));
+                  if (existing) {
+                    if (!overwrite.checked || existing.value === v) continue;
+                    existing.value = v;
+                    existing.secret = true;
+                  } else {
+                    sec.entries.splice(idx + 1, 0, newEntry({ label: p.label, value: v, secret: true }));
+                  }
+                  touched = true;
+                }
+                if (touched) changed.push(next);
+              }
+              await state.session.commitCustomers(changed);
+              toast(`Bei ${changed.length} Kunden eingetragen – rückgängig über den Verlauf`);
+              go('#/');
+            },
+          },
+          'Eintragen',
+        ),
+      ),
+    ),
+  );
+}
+
 // ---------- Sicherheitscheck ----------
 
 function renderSecurity() {
@@ -1301,6 +1489,26 @@ function renderSettings() {
         'p',
         { class: 'muted small' },
         'Die Sicherung enthält alle Kunden, Bilder und Versionen. Sie ist mit dem Tresorschlüssel verschlüsselt und nur zusammen mit einem Master-Passwort dieses Tresors lesbar.',
+      ),
+    ),
+  );
+
+  // Werkzeuge
+  wrap.append(
+    h(
+      'section',
+      {},
+      h('h2', {}, 'Werkzeuge'),
+      h(
+        'a',
+        { class: 'list-item', href: '#/werkzeug/anydesk', style: 'padding-left:0;padding-right:0' },
+        h(
+          'div',
+          { class: 'grow' },
+          h('div', { class: 'title' }, 'AnyDesk-Passwort bei allen Geräten eintragen'),
+          h('div', { class: 'sub' }, `${remoteEntries(s.data).filter((x) => x.entry.kind === 'anydesk').length} AnyDesk-Geräte`),
+        ),
+        h('span', { class: 'chev' }, icon('chev')),
       ),
     ),
   );

@@ -548,10 +548,8 @@ def main():
     for name, line in cfg.get('notes', {}).items():
         reg.note(name, line)
 
-    stamp = dt.date.today().strftime('%d.%m.%Y')
     customers = sorted(reg.customers.values(), key=lambda c: c['name'].lower())
     for c in customers:
-        c['note'] = (c['note'] + f'\nImportiert am {stamp}.').strip()
         order = {cat: i for i, cat in enumerate(CATEGORIES)}
         c['sections'].sort(key=lambda s: order[s['category']])
 

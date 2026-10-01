@@ -218,3 +218,16 @@ input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appe
 .badge { display: inline-block; margin-left: 6px; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: #fde7c7; color: #7a4200; vertical-align: 1px; }
 @media (prefers-color-scheme: dark) { .badge { background: #4a3413; color: #f5c77e; } }
 .card > h3 .muted.small { font-weight: 400; }
+
+/* Angeheftete Kundenleiste (Name, Knoepfe, Kapitel) */
+.sticky-head {
+  position: sticky; top: var(--top-h, 118px); z-index: 5;
+  background: var(--bg); margin: 0 -16px 8px; padding: 6px 16px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.sticky-head .row-head { margin: 0 0 6px; }
+.sticky-head .chips { margin: 0; }
+.chips a.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+@media (max-width: 560px) { .sticky-head .row-head h1 { font-size: 20px; } }
+.sticky-head .row-head h1 { overflow-wrap: break-word; word-break: normal; hyphens: auto; }
+@media (max-width: 560px) { .sticky-head .btn-label { display: none; } .sticky-head .btn { padding: 0; width: 40px; min-width: 40px; } }
