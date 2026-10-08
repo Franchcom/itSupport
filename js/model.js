@@ -9,14 +9,22 @@
 // Entry    = { id, label, value, secret, kind, note }
 
 export const CATEGORIES = [
+  // Vorlagen-Karten (siehe templates.js)
+  'Firma',
+  'Personen',
+  'Geräte',
+  'Internet & WLAN',
+  'Microsoft 365',
+  'Domain & E-Mail',
+  'Backup',
+  // freie Bereiche
+  'Portale & Web',
+  'Noch einzusortieren',
   'Fernwartung',
   'Netzwerk',
   'Server & NAS',
   'Benutzer & Geräte',
-  'Microsoft 365',
   'E-Mail',
-  'Portale & Web',
-  'Backup',
   'Notizen',
 ];
 
@@ -76,7 +84,7 @@ export function diffCustomers(before, after) {
     const y = b.get(id);
     if (!y) out.push(`entfernt: ${name(x)}`);
     else if (x.e.value !== y.e.value) out.push(`geändert: ${name(y)}`);
-    else if (x.e.label !== y.e.label || x.e.note !== y.e.note || x.e.secret !== y.e.secret || x.e.kind !== y.e.kind) {
+    else if (x.e.label !== y.e.label || x.e.note !== y.e.note || x.e.secret !== y.e.secret || x.e.kind !== y.e.kind || !!x.e.na !== !!y.e.na) {
       out.push(`bearbeitet: ${name(y)}`);
     }
   }

@@ -3,7 +3,7 @@
 // offline die Kopie. Die API wird nie zwischengespeichert; die Kundendaten
 // liegen verschluesselt im localStorage, nicht hier.
 
-const CACHE = 'itsupport-shell-v2';
+const CACHE = 'itsupport-shell-v3';
 const SHELL = [
   '/',
   '/index.html',
@@ -16,6 +16,7 @@ const SHELL = [
   '/js/vault.js',
   '/js/blobstore.js',
   '/js/images.js',
+  '/js/templates.js',
   '/icons/icon.svg',
   '/icons/apple-touch-icon.png',
   '/icons/icon-192.png',

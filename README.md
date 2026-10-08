@@ -10,6 +10,10 @@ verlassen. Der Server speichert nur Chiffretext.
 - **Offline:** Die verschlüsselte Kopie liegt auf dem Gerät, Entsperren geht auch ohne Netz.
 - **Zwei Personen:** Admin und Mitarbeiter, jeweils mit eigenem Master-Passwort. Änderungen werden abgeglichen.
 - **Sicherheitscheck:** zeigt Passwörter, die bei mehreren Kunden vorkommen.
+- **Einheitliche Vorlagen:** Firma, Person, Gerät, Internet & WLAN, Microsoft 365, Domain & E-Mail, Backup –
+  bei jedem Kunden dieselben Felder in derselben Reihenfolge („Apple-ID“, darunter „Apple-ID-Passwort“ …).
+  Leere Pflichtfelder sind als „fehlt“ markiert, „gibt es nicht“ blendet ein Feld aus.
+- **Offene Punkte:** Liste aller fehlenden Angaben über alle Kunden – die Nachtrags-Liste.
 - **Automatische Sperre** nach Inaktivität und wenn die App länger im Hintergrund ist.
 - **Bilder** pro Kunde (Screenshots, Fotos vom Router-Aufkleber …), verschlüsselt, auch offline verfügbar.
 - **Verlauf:** Jede Änderung hebt den vorherigen Stand auf (bis zu 50 Versionen pro Kunde). Alte Werte ansehen,
@@ -110,5 +114,6 @@ Was nicht veröffentlicht werden soll, steht in `.vercelignore`.
 | `js/app.js`    | Oberfläche |
 | `js/blobstore.js`     | lokaler Speicher (IndexedDB) für verschlüsselte Bilder und Versionen, Upload-Warteschlange |
 | `js/images.js`        | Bilder vor dem Verschlüsseln verkleinern |
+| `js/templates.js`     | Vorlagen (Felder je Karte), offene Punkte, Umstellung alter Daten auf Vorlagen |
 | `api/*.js`            | `status`, `prelogin`, `setup`, `vault`, `users`, `password`, `blob` |
 | `api/_lib/storage.js` | Upstash Redis (Produktion) bzw. JSON-Datei (lokal) |

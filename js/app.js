@@ -18,6 +18,17 @@ import {
 } from './model.js';
 import { UnlockError, forgetDevice, loadCache, setupVault, unlock } from './vault.js';
 import { prepareImage } from './images.js';
+import {
+  TEMPLATES,
+  TEMPLATE_ORDER,
+  fieldDef,
+  migrateCustomer,
+  missingFields,
+  needsMigration,
+  newTemplateSection,
+  normalizeSection,
+  syncTitle,
+} from './templates.js';
 
 const MIN_PASSWORD = 12;
 const REVEAL_MS = 20000;
@@ -179,6 +190,7 @@ function render() {
   if (r.name === 'einstellungen') return renderSettings();
   if (r.name === 'sicherheit') return renderSecurity();
   if (r.name === 'werkzeug' && r.id === 'anydesk') return renderAnydeskTool();
+  if (r.name === 'offen') return renderOpen(r.id);
   return renderHome();
 }
 
@@ -275,8 +287,14 @@ function updatePill() {
 function entryRow(c, s, e, { context = false, badge = '' } = {}) {
   const isRemote = e.kind === 'anydesk' || e.kind === 'teamviewer';
   const revealed = state.revealed.has(e.id);
+  const fd = s && fieldDef(s, e);
   let valueEl;
-  if (e.secret && !revealed) {
+  if (fd && !String(e.value || '').trim()) {
+    // Leeres Standardfeld einer Vorlage
+    if (e.na) valueEl = h('div', { class: 'entry-value empty-na' }, 'gibt es nicht');
+    else if (fd.optional) valueEl = h('div', { class: 'entry-value empty-opt' }, '–');
+    else valueEl = h('div', { class: 'entry-value empty-missing' }, 'fehlt – bitte nachtragen');
+  } else if (e.secret && !revealed) {
     valueEl = h('div', { class: 'entry-value masked' }, e.value ? '••••••••' : '–');
   } else if (e.kind === 'url' && /^https?:\/\//i.test(e.value)) {
     valueEl = h('div', { class: 'entry-value' }, h('a', { href: e.value, target: '_blank', rel: 'noopener noreferrer' }, e.value));
@@ -361,6 +379,7 @@ function renderHome() {
     [
       ['kunden', 'Kunden'],
       ['fernwartung', 'Fernwartung'],
+      ['offen', `Offen (${liveCustomers(state.session.data).reduce((n, c) => n + missingFields(c).length, 0)})`],
     ].map(([key, label]) =>
       h(
         'button',
@@ -391,6 +410,11 @@ function renderHome() {
         h('a', { class: 'btn primary', href: '#/neu' }, icon('plus'), 'Kunde anlegen'),
       ),
     );
+    return;
+  }
+
+  if (state.tab === 'offen') {
+    renderOpen(null, { embedded: true });
     return;
   }
 
@@ -545,6 +569,29 @@ function renderCustomer(id) {
   );
   const note = visibleNote(c.note);
   if (note) mainEl.append(h('div', { class: 'note' }, note));
+  if (needsMigration(c)) {
+    mainEl.append(
+      h(
+        'div',
+        { class: 'version-banner' },
+        h('div', {}, h('b', {}, 'Noch nicht auf Vorlagen umgestellt.'), ' Felder sind uneinheitlich benannt.'),
+        h(
+          'button',
+          {
+            class: 'btn primary',
+            onclick: async () => {
+              await state.session.commitCustomers([migrateCustomer(c)]);
+              toast('Umgestellt – der alte Stand ist im Verlauf');
+            },
+          },
+          'Jetzt umstellen',
+        ),
+      ),
+    );
+  } else {
+    const open = missingFields(c).length;
+    if (open) mainEl.append(h('a', { class: 'open-link', href: `#/offen/${c.id}` }, `${open} offene Punkte – nachtragen`));
+  }
 
   for (const cat of cats) {
     mainEl.append(h('h2', { class: 'cat', id: `cat-${CATEGORIES.indexOf(cat)}` }, cat));
@@ -606,10 +653,18 @@ addEventListener(
 );
 
 function sectionCard(c, s) {
+  const t = TEMPLATES[s.type];
+  const open = t ? missingFields({ sections: [s] }).length : 0;
   return h(
     'div',
     { class: 'card' },
-    s.title && h('h3', {}, s.title),
+    (s.title || t) &&
+      h(
+        'h3',
+        {},
+        h('span', {}, s.title || t.label),
+        t && h('span', { class: 'muted small' }, [t.label !== s.title ? t.label : '', open ? `${open} offen` : ''].filter(Boolean).join(' · ')),
+      ),
     s.entries.length ? s.entries.map((e) => entryRow(c, s, e)) : h('div', { class: 'entry muted small' }, 'Leer'),
   );
 }
@@ -852,6 +907,7 @@ function renderEdit(id) {
       return;
     }
     state.draft = base ? structuredClone(base) : newCustomer('', user);
+    if (!base) state.draft.sections.push(newTemplateSection('firma'));
     state.draft._for = id || null;
     state.draft._key = key;
   }
@@ -876,7 +932,151 @@ function renderEdit(id) {
     ),
   );
 
+  function templateEditCard(s, si) {
+    normalizeSection(s);
+    const t = TEMPLATES[s.type];
+    const card = h(
+      'div',
+      { class: 'edit-sec tpl' },
+      h(
+        'div',
+        { class: 'tpl-head' },
+        h('span', { class: 'tpl-type' }, t.label),
+        h('b', { class: 'tpl-title' }, s.title !== t.label ? s.title : ''),
+        h(
+          'button',
+          {
+            class: 'btn danger icon',
+            'aria-label': `${t.label} entfernen`,
+            onclick: () => {
+              if (!confirm(`${t.label} „${s.title}“ entfernen? (bleibt im Verlauf erhalten)`)) return;
+              d.sections.splice(si, 1);
+              rerender();
+            },
+          },
+          icon('trash'),
+        ),
+      ),
+    );
+    for (const e of s.entries) {
+      const fd = e.field && t.fields.find((x) => x.key === e.field);
+      if (fd) {
+        const isTitle = fd.key === t.titleField;
+        const valueInp = h('input', {
+          class: `inp${fd.secret || fd.kind !== 'text' ? ' mono' : ''}`,
+          value: e.value,
+          placeholder: e.na ? 'gibt es nicht' : fd.optional ? 'optional' : '',
+          disabled: e.na ? true : null,
+          autocapitalize: 'off',
+          autocomplete: 'off',
+          spellcheck: 'false',
+          oninput: (ev) => {
+            e.value = ev.target.value;
+            if (isTitle) syncTitle(s);
+          },
+        });
+        card.append(
+          h(
+            'div',
+            { class: 'tpl-row' },
+            h('label', { class: 'tpl-label' }, fd.label, fd.secret && h('span', { class: 'muted small' }, ' (geheim)')),
+            valueInp,
+            !isTitle
+              ? h(
+                  'label',
+                  { class: 'check small', title: 'Bei diesem Kunden nicht vorhanden – zählt nicht als offen' },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: !!e.na,
+                    onchange: (ev) => {
+                      e.na = ev.target.checked;
+                      valueInp.disabled = e.na;
+                      valueInp.placeholder = e.na ? 'gibt es nicht' : fd.optional ? 'optional' : '';
+                    },
+                  }),
+                  'gibt es nicht',
+                )
+              : h('span'),
+          ),
+        );
+      } else {
+        const ei = s.entries.indexOf(e);
+        card.append(
+          h(
+            'div',
+            { class: 'tpl-row extra' },
+            h('input', { class: 'inp', value: e.label, placeholder: 'Zusatzfeld', oninput: (ev) => (e.label = ev.target.value) }),
+            h('input', {
+              class: 'inp mono',
+              value: e.value,
+              placeholder: 'Wert',
+              autocapitalize: 'off',
+              autocomplete: 'off',
+              spellcheck: 'false',
+              oninput: (ev) => (e.value = ev.target.value),
+              onchange: () => {
+                if (e.kind === 'text') e.kind = guessKind(e.label, e.value);
+              },
+            }),
+            h(
+              'div',
+              { class: 'tpl-extra-opts' },
+              h('label', { class: 'check small' }, h('input', { type: 'checkbox', checked: e.secret, onchange: (ev) => (e.secret = ev.target.checked) }), 'geheim'),
+              h(
+                'button',
+                {
+                  class: 'btn danger icon',
+                  'aria-label': 'Zusatzfeld löschen',
+                  onclick: () => {
+                    s.entries.splice(ei, 1);
+                    rerender();
+                  },
+                },
+                icon('trash'),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    card.append(
+      h(
+        'div',
+        { class: 'bar', style: 'margin-top:8px' },
+        h(
+          'button',
+          {
+            class: 'btn',
+            onclick: () => {
+              s.entries.push(newEntry());
+              rerender();
+            },
+          },
+          icon('plus'),
+          'Zusatzfeld',
+        ),
+        h(
+          'button',
+          {
+            class: 'btn',
+            onclick: () => {
+              s.entries.push(newEntry({ label: 'Passwort', secret: true }));
+              rerender();
+            },
+          },
+          icon('plus'),
+          'Zusatz-Passwort',
+        ),
+      ),
+    );
+    return card;
+  }
+
   d.sections.forEach((s, si) => {
+    if (s.type) {
+      mainEl.append(templateEditCard(s, si));
+      return;
+    }
     const sec = h(
       'div',
       { class: 'edit-sec' },
@@ -1074,31 +1274,43 @@ function renderEdit(id) {
     h(
       'div',
       { class: 'bar' },
-      h(
-        'button',
-        {
-          class: 'btn',
-          onclick: () => {
-            d.sections.push(newSection('', 'Netzwerk'));
-            rerender();
+      TEMPLATE_ORDER.filter((type) => !(TEMPLATES[type].single && d.sections.some((x) => x.type === type))).map((type) =>
+        h(
+          'button',
+          {
+            class: 'btn',
+            onclick: () => {
+              const sec = newTemplateSection(type, type === 'firma' ? { name: d.name } : {});
+              // An passender Stelle einfuegen: hinter der letzten Karte gleicher Art bzw. Reihenfolge.
+              const rank = (x) => (x.type ? TEMPLATE_ORDER.indexOf(x.type) : 99);
+              let at = d.sections.length;
+              for (let i = d.sections.length - 1; i >= 0; i--) {
+                if (rank(d.sections[i]) <= rank(sec)) {
+                  at = i + 1;
+                  break;
+                }
+                at = i;
+              }
+              d.sections.splice(at, 0, sec);
+              rerender();
+              setTimeout(() => mainEl.querySelectorAll('.edit-sec')[at]?.querySelector('input')?.focus(), 0);
+            },
           },
-        },
-        icon('plus'),
-        'Bereich',
+          icon('plus'),
+          TEMPLATES[type].label,
+        ),
       ),
       h(
         'button',
         {
           class: 'btn',
           onclick: () => {
-            const s = newSection('Neues Gerät', 'Fernwartung');
-            s.entries.push(newEntry({ label: 'AnyDesk', kind: 'anydesk' }), newEntry({ label: 'Windows-Passwort', secret: true }));
-            d.sections.push(s);
+            d.sections.push(newSection('', 'Notizen'));
             rerender();
           },
         },
         icon('plus'),
-        'AnyDesk-Gerät',
+        'Freier Bereich',
       ),
     ),
     h(
@@ -1131,8 +1343,19 @@ async function saveDraft() {
   delete clean._key;
   clean.attachments = (clean.attachments || []).map((a) => ({ ...a, title: (a.title || '').trim(), group: (a.group || '').trim() }));
   clean.sections = clean.sections
-    .map((s) => ({ ...s, title: s.title.trim(), entries: s.entries.filter((e) => e.label.trim() || e.value.trim()) }))
-    .filter((s) => s.title || s.entries.length);
+    .map((s) => {
+      if (s.type) {
+        const sec = normalizeSection({ ...s, entries: s.entries.filter((e) => e.field || e.label.trim() || e.value.trim()) });
+        if (s.type === 'firma') {
+          const n = sec.entries.find((e) => e.field === 'name');
+          if (!n.value.trim()) n.value = clean.name;
+        }
+        for (const e of sec.entries) e.value = e.value.trim();
+        return syncTitle(sec);
+      }
+      return { ...s, title: s.title.trim(), entries: s.entries.filter((e) => e.label.trim() || e.value.trim()) };
+    })
+    .filter((s) => s.type || s.title || s.entries.length);
   state.draft = null;
   await state.session.commitCustomers([clean]);
   toast('Gespeichert – der vorherige Stand ist im Verlauf');
@@ -1148,6 +1371,110 @@ async function deleteCustomer() {
   await state.session.deleteCustomer(d._for);
   toast('Kunde in den Papierkorb gelegt');
   go('#/');
+}
+
+// ---------- Offene Punkte ----------
+
+function renderOpen(customerId, { embedded = false } = {}) {
+  const all = liveCustomers(state.session.data).filter((c) => !customerId || c.id === customerId);
+  const items = all.flatMap((c) => missingFields(c).map((m) => ({ ...m, customer: c })));
+  const unmigrated = all.filter(needsMigration);
+  if (!embedded) {
+    mainEl.append(
+      h(
+        'div',
+        { class: 'row-head' },
+        h('a', { class: 'btn ghost icon', href: customerId ? `#/k/${customerId}` : '#/', 'aria-label': 'Zurück' }, icon('back')),
+        h('h1', {}, customerId ? `Offen: ${all[0]?.name || ''}` : 'Offene Punkte'),
+      ),
+    );
+  }
+  if (unmigrated.length) {
+    mainEl.append(
+      h(
+        'p',
+        { class: 'version-banner' },
+        `${unmigrated.length} Kunden sind noch nicht auf Vorlagen umgestellt und fehlen hier. `,
+        h('a', { href: '#/einstellungen' }, 'Unter Einstellungen → Werkzeuge umstellen'),
+      ),
+    );
+  }
+  if (!items.length) {
+    mainEl.append(h('p', { class: 'empty' }, 'Nichts offen – alles nachgetragen. 🎉'));
+    return;
+  }
+  // Ueberblick: welches Feld fehlt wie oft
+  if (!customerId) {
+    const byField = new Map();
+    for (const it of items) {
+      const k = `${TEMPLATES[it.type].label}: ${it.field.label}`;
+      byField.set(k, (byField.get(k) || 0) + 1);
+    }
+    mainEl.append(
+      h(
+        'div',
+        { class: 'card' },
+        h('h3', {}, 'Was am häufigsten fehlt', h('span', { class: 'muted small' }, `${items.length} gesamt`)),
+        h(
+          'div',
+          { class: 'open-summary' },
+          [...byField]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 12)
+            .map(([k, n]) => h('span', { class: 'pill' }, `${k} · ${n}`)),
+        ),
+      ),
+    );
+  }
+  mainEl.append(
+    h(
+      'p',
+      { class: 'muted small' },
+      'Tippe auf einen Punkt, um den Kunden zu bearbeiten. „Gibt es nicht“ blendet ihn dauerhaft aus (z. B. Person ohne Apple-ID).',
+    ),
+  );
+  const byCustomer = new Map();
+  for (const it of items) {
+    if (!byCustomer.has(it.customer.id)) byCustomer.set(it.customer.id, []);
+    byCustomer.get(it.customer.id).push(it);
+  }
+  for (const list of byCustomer.values()) {
+    const c = list[0].customer;
+    mainEl.append(
+      h(
+        'div',
+        { class: 'card' },
+        h('h3', {}, h('a', { href: `#/k/${c.id}` }, c.name), h('span', { class: 'muted small' }, `${list.length} offen`)),
+        list.map((it) =>
+          h(
+            'div',
+            { class: 'list-item' },
+            h(
+              'a',
+              { class: 'grow', href: `#/k/${c.id}/bearbeiten`, style: 'text-decoration:none;color:inherit' },
+              h('div', { class: 'title' }, it.field.label),
+              h('div', { class: 'sub' }, `${TEMPLATES[it.type].label}${it.section.title && it.section.title !== TEMPLATES[it.type].label ? ` „${it.section.title}“` : ''}`),
+            ),
+            h(
+              'button',
+              {
+                class: 'btn small-btn',
+                onclick: async () => {
+                  const next = structuredClone(c);
+                  const e = next.sections.find((x) => x.id === it.section.id)?.entries.find((x) => x.id === it.entry.id);
+                  if (!e) return;
+                  e.na = true;
+                  await state.session.commitCustomers([next]);
+                  toast(`„${it.field.label}“ als nicht vorhanden markiert`);
+                },
+              },
+              'gibt es nicht',
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ---------- Werkzeug: AnyDesk-Passwort fuer alle Geraete ----------
@@ -1196,7 +1523,7 @@ function renderAnydeskTool() {
         if (!sec.entries.some((e) => e.kind === 'anydesk' && e.value)) continue;
         devices.add(sec.id);
         const existing = sec.entries.find((e) => isTarget(e, label));
-        if (!existing) add++;
+        if (!existing || !existing.value) add++;
         else if (overwrite.checked) update++;
         else keep++;
       }
@@ -1259,7 +1586,8 @@ function renderAnydeskTool() {
                   if (idx < 0) continue;
                   const existing = sec.entries.find((e) => isTarget(e, p.label));
                   if (existing) {
-                    if (!overwrite.checked || existing.value === v) continue;
+                    if (existing.value && (!overwrite.checked || existing.value === v)) continue;
+                    existing.na = false;
                     existing.value = v;
                     existing.secret = true;
                   } else {
@@ -1499,6 +1827,35 @@ function renderSettings() {
       'section',
       {},
       h('h2', {}, 'Werkzeuge'),
+      (() => {
+        const todo = liveCustomers(s.data).filter(needsMigration);
+        if (!todo.length) return h('p', { class: 'muted small' }, 'Alle Kunden sind auf die einheitlichen Vorlagen umgestellt.');
+        return h(
+          'div',
+          { class: 'version-banner' },
+          h('div', {}, h('b', {}, `${todo.length} Kunden auf einheitliche Vorlagen umstellen`)),
+          h(
+            'div',
+            { class: 'small' },
+            'Firma, Personen, Geräte, Internet & WLAN, Microsoft 365, Domain & E-Mail, Backup. Was sich nicht sicher zuordnen lässt, landet unverändert unter „Noch einzusortieren“. Der bisherige Stand jedes Kunden bleibt im Verlauf.',
+          ),
+          h(
+            'button',
+            {
+              class: 'btn primary',
+              onclick: async () => {
+                if (!confirm(`${todo.length} Kunden jetzt umstellen?`)) return;
+                await s.commitCustomers(todo.map(migrateCustomer));
+                toast('Umgestellt – offene Punkte siehst du auf der Startseite unter „Offen“');
+                state.tab = 'offen';
+                setPref('tab', 'offen');
+                go('#/');
+              },
+            },
+            'Jetzt umstellen',
+          ),
+        );
+      })(),
       h(
         'a',
         { class: 'list-item', href: '#/werkzeug/anydesk', style: 'padding-left:0;padding-right:0' },

@@ -231,3 +231,31 @@ input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appe
 @media (max-width: 560px) { .sticky-head .row-head h1 { font-size: 20px; } }
 .sticky-head .row-head h1 { overflow-wrap: break-word; word-break: normal; hyphens: auto; }
 @media (max-width: 560px) { .sticky-head .btn-label { display: none; } .sticky-head .btn { padding: 0; width: 40px; min-width: 40px; } }
+
+/* Vorlagen-Karten */
+.entry-value.empty-missing { font-family: inherit; font-size: 14px; color: var(--warn); font-weight: 600; }
+.entry-value.empty-opt { color: var(--ink-3); }
+.entry-value.empty-na { font-family: inherit; font-size: 14px; color: var(--ink-3); font-style: italic; }
+.card > h3 > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.open-link {
+  display: inline-block; margin: 4px 0 10px; padding: 6px 12px; border-radius: 99px;
+  background: #fde7c7; color: #7a4200; font-size: 14px; font-weight: 600; text-decoration: none;
+}
+@media (prefers-color-scheme: dark) { .open-link { background: #4a3413; color: #f5c77e; } }
+.open-summary { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
+.small-btn { min-height: 34px; padding: 6px 10px; font-size: 13px; }
+
+.edit-sec.tpl { padding-top: 8px; }
+.tpl-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.tpl-type { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); font-weight: 700; }
+.tpl-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.tpl-row { display: grid; grid-template-columns: 170px 1fr 130px; gap: 8px; align-items: center; padding: 4px 0; }
+.tpl-row.extra { border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 4px; }
+.tpl-label { font-size: 14px; color: var(--ink-2); }
+.tpl-extra-opts { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+.tpl-row .inp[disabled] { opacity: .55; }
+@media (max-width: 560px) {
+  .tpl-row { grid-template-columns: 1fr auto; }
+  .tpl-row .tpl-label { grid-column: 1 / -1; margin-bottom: -4px; }
+  .tpl-row.extra { grid-template-columns: 1fr; }
+}

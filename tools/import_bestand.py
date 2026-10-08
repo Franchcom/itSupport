@@ -45,7 +45,7 @@ IP = re.compile(r'^\d{1,3}(\.\d{1,3}){3}\.?(:\d+)?$')
 DATE = re.compile(r'^\d{1,2}\.\d{1,2}\.\d{2,4}$')
 HOST = re.compile(r'^[a-z0-9-]+(\.[a-z0-9-]+)+\.[a-z]{2,}$', re.I)
 EMAIL = re.compile(r'^[^\s@]+@[^\s@]+\.[a-z]{2,}$', re.I)
-NOT_SECRET_WORDS = re.compile(r'^(office|o|m|microsoft)365$|^win(dows)?\d+$|^server\d+$|^eth\d+$|^plan\d$|^ATU\d{8}$', re.I)
+NOT_SECRET_WORDS = re.compile(r'^(ms)?(office|o|m|microsoft)365$|^win(dows)?\d+$|^server\d+$|^eth\d+$|^plan\d$|^ATU\d{8}$', re.I)
 DOMAIN_START = re.compile(r'^([a-z0-9-]+\.)+[a-z]{2,}(?=\s|$)', re.I)
 
 

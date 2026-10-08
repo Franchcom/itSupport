@@ -5,6 +5,7 @@ import * as C from './crypto.js';
 import { api, ApiError } from './api.js';
 import { applyImport, diffCustomers, emptyData, merge, MAX_VERSIONS, snapshotOf, uid } from './model.js';
 import { blobs } from './blobstore.js';
+import { migrateCustomer } from './templates.js';
 import { base64ToBytes } from './images.js';
 
 const te = new TextEncoder();
@@ -379,7 +380,8 @@ export class Session {
       customers.push({ ...ic, attachments });
     }
     const r = applyImport(this.data, { ...obj, customers }, this.user);
-    const changed = r.data.customers.filter((c) => !this.data.customers.includes(c));
+    // Neu importierte Kunden gleich auf die Vorlagen umstellen.
+    const changed = r.data.customers.filter((c) => !this.data.customers.includes(c)).map(migrateCustomer);
     await this.commitCustomers(changed);
     return { ...r, images: done };
   }
