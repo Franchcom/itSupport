@@ -652,7 +652,9 @@ addEventListener(
   { passive: true },
 );
 
-function sectionCard(c, s) {
+function sectionCard(c, raw) {
+  // Vorlagen-Karten immer mit allen aktuellen Feldern anzeigen (auch neu hinzugekommenen).
+  const s = raw.type ? normalizeSection(structuredClone(raw)) : raw;
   const t = TEMPLATES[s.type];
   const open = t ? missingFields({ sections: [s] }).length : 0;
   return h(

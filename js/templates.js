@@ -20,8 +20,8 @@ export const TEMPLATES = {
       f('name', 'Firmenname'),
       f('adresse', 'Adresse'),
       f('ansprechpartner', 'Ansprechpartner'),
-      f('telefon', 'Telefon', { kind: 'phone' }),
-      f('email', 'E-Mail', { kind: 'email' }),
+      f('telefon', 'Telefon (Zentrale)', { kind: 'phone' }),
+      f('email', 'E-Mail (allgemein)', { kind: 'email' }),
       f('uid', 'UID', { optional: true }),
     ],
   },
@@ -31,13 +31,15 @@ export const TEMPLATES = {
     titleField: 'name',
     fields: [
       f('name', 'Name'),
+      f('funktion', 'Funktion', { optional: true }),
       f('email', 'E-Mail', { kind: 'email' }),
+      f('telefon', 'Telefon / Durchwahl', { kind: 'phone', optional: true }),
+      f('handy', 'Handynummer', { kind: 'phone', optional: true }),
       pw('m365pw', 'M365-Passwort'),
       f('winuser', 'Windows-Benutzer'),
       pw('winpw', 'Windows-Passwort'),
       f('appleid', 'Apple-ID', { kind: 'email' }),
       pw('applepw', 'Apple-ID-Passwort'),
-      f('handy', 'Handynummer', { kind: 'phone', optional: true }),
       f('notiz', 'Notiz', { optional: true }),
     ],
   },
@@ -448,6 +450,19 @@ export function migrateCustomer(customer) {
 
   // Wer eigene Geraete hat, hat auch Internet/WLAN vor Ort.
   if (out.geraet.length) netzCard();
+
+  // "Benutzt von": Geraet "Haas Michel" gehoert zur Person "Michel Haas".
+  const words = (x) => norm(x).split(/[^a-z0-9äöüß]+/).filter((w) => w.length > 1);
+  for (const g of out.geraet) {
+    const ben = g.entries.find((e) => e.field === 'benutzer');
+    if (ben.value) continue;
+    const gw = new Set(words(g.entries.find((e) => e.field === 'name').value));
+    const hit = out.person.filter((p) => {
+      const pw = words(p.entries.find((e) => e.field === 'name').value);
+      return pw.length >= 2 && pw.every((w) => gw.has(w));
+    });
+    if (hit.length === 1) ben.value = hit[0].entries.find((e) => e.field === 'name').value;
+  }
 
   c.sections = [...out.firma, ...out.person, ...out.geraet, ...out.netz, ...out.m365, ...out.domain, ...out.rest].map((s) =>
     s.type ? normalizeSection(s) : s,
