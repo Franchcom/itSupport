@@ -85,3 +85,26 @@ test('Vorlagen-Karte normalisieren: fehlende Felder ergaenzen, Reihenfolge, Zusa
   assert.equal(sec.entries.find((e) => e.field === 'ip').label, 'IP-Adresse');
   assert.equal(sec.entries.at(-1).label, 'Bemerkung');
 });
+
+test('Kontaktdaten aus Notizen: Handy zur Person, Adresse/Zentrale/UID zur Firma', async () => {
+  const { suggestContacts, applySuggestions } = await import('../js/templates.js');
+  const c = migrateCustomer(
+    applyImport(emptyData(), { customers: [{ name: 'Muster GmbH', sections: [
+      { title: 'Microsoft 365 – muster.at', category: 'Microsoft 365', entries: [{ label: 'anna.berg@muster.at', value: 'Ab1234!x', secret: true }] },
+      { title: 'Notizen', category: 'Notizen', entries: [
+        { label: '', value: 'anna.berg@muster.at' }, { label: 'PW', value: 'x', secret: true }, { label: 'Tel', value: '+43 664 1234567' },
+        { label: 'Adressen', value: '1010 Wien, Testgasse 7 · phone +43(1)555-1234' }, { label: 'UID', value: 'ATU12345678' },
+        { label: 'Alte Adresse', value: '1020 Wien, Altgasse 1' },
+      ] },
+    ] }] }, 't').data.customers[0],
+  );
+  const s = suggestContacts(c);
+  assert.deepEqual(s.map((x) => `${x.owner}|${x.key}|${x.value}`), [
+    'Anna Berg|handy|+43 664 1234567',
+    'Muster GmbH|adresse|Testgasse 7, 1010 Wien',
+    'Muster GmbH|telefon|+43(1)555-1234',
+    'Muster GmbH|uid|ATU12345678',
+  ]);
+  const after = applySuggestions(c, s);
+  assert.equal(suggestContacts(after).length, 0, 'nichts doppelt');
+});

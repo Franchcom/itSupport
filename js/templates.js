@@ -469,3 +469,75 @@ export function migrateCustomer(customer) {
   );
   return c;
 }
+
+// ------------------------------------------- Kontaktdaten aus Notizen
+
+const PHONE = /(\+?\d[\d\s/()-]{6,}\d)/;
+const isMobile = (p) => /^(\+|00)?\s*43\s*\(?0?\)?\s*6\d|^06\d/.test(p.replace(/[^\d+]/g, '').replace(/^0043/, '+43')) || /^\+?43\s*6/.test(p);
+
+function addressIn(text) {
+  // "1070 Wien, Kirchengasse 48" oder "Kirchengasse 48, 1070 Wien"
+  let m = text.match(/\b(\d{4})\s+([A-ZÄÖÜ][\wäöüß.-]+),\s*([A-ZÄÖÜ][\wäöüß. -]*?\s\d+[a-z]?(?:\/\d+)*)/);
+  if (m) return `${m[3].trim()}, ${m[1]} ${m[2]}`;
+  m = text.match(/\b([A-ZÄÖÜ][\wäöüß. -]*?(?:gasse|straße|strasse|weg|platz|ring|allee|zeile|kai|steig)\s\d+[a-z]?(?:\/\d+)*),\s*(\d{4})\s+([A-ZÄÖÜ][\wäöüß.-]+)/i);
+  if (m) return `${m[1].trim()}, ${m[2]} ${m[3]}`;
+  return '';
+}
+
+// Sucht in freien Bereichen (Notizen, "Noch einzusortieren") nach Kontaktdaten,
+// die in leere Felder der Vorlagen-Karten gehoeren. Liefert nur Vorschlaege.
+export function suggestContacts(customer) {
+  const out = [];
+  const taken = new Set();
+  const persons = (customer.sections || []).filter((s) => s.type === 'person');
+  const firma = (customer.sections || []).find((s) => s.type === 'firma');
+  const field = (sec, key) => sec?.entries.find((e) => e.field === key);
+  const propose = (sec, key, value, source) => {
+    const target = field(sec, key);
+    const k = `${sec?.id}:${key}`;
+    if (!target || String(target.value || '').trim() || target.na || taken.has(k)) return;
+    taken.add(k);
+    out.push({ sectionId: sec.id, entryId: target.id, key, label: target.label, value: value.trim(), owner: sec.title, source });
+  };
+  for (const s of customer.sections || []) {
+    if (s.type) continue;
+    let current = null;
+    for (const e of s.entries) {
+      const text = [e.label, e.value].filter(Boolean).join(' ');
+      const mail = text.match(/[^\s@·]+@[^\s@·]+\.[a-z]{2,}/i)?.[0]?.toLowerCase();
+      if (mail) {
+        const p = persons.find((x) => norm(field(x, 'email')?.value) === mail);
+        if (p) {
+          current = p;
+          continue;
+        }
+      }
+      // Eine Person "gilt" nur fuer direkt folgende Zeilen wie PW/Tel; jede andere
+      // Ueberschrift beendet den Bezug.
+      if (e.label && !/^(pw|pass|passwort|tel|telefon|handy|mobil|phone)\b/i.test(e.label)) current = null;
+      const isPhoneLabel = /^(tel|telefon|handy|mobil|phone)\b/i.test(e.label || '');
+      const phone = (isPhoneLabel ? e.value : '').match(PHONE)?.[1];
+      if (phone && current) {
+        propose(current, isMobile(phone) ? 'handy' : 'telefon', phone, s.title);
+        continue;
+      }
+      if (!firma) continue;
+      const adr = addressIn(text);
+      if (adr && !/alt/i.test(e.label || '')) propose(firma, 'adresse', adr, s.title);
+      const fphone = text.match(/\b(?:phone|tel\.?|telefon)\s*:?\s*(\+?\d[\d\s/()-]{6,}\d)/i)?.[1];
+      if (fphone && !current) propose(firma, 'telefon', fphone, s.title);
+      const uid = text.match(/\bATU\s?\d{8}\b/)?.[0];
+      if (uid) propose(firma, 'uid', uid.replace(/\s/g, ''), s.title);
+    }
+  }
+  return out;
+}
+
+export function applySuggestions(customer, suggestions) {
+  const c = structuredClone(customer);
+  for (const sg of suggestions) {
+    const e = c.sections.find((s) => s.id === sg.sectionId)?.entries.find((x) => x.id === sg.entryId);
+    if (e && !String(e.value || '').trim()) e.value = sg.value;
+  }
+  return c;
+}

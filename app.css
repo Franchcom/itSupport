@@ -259,3 +259,6 @@ input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appe
   .tpl-row .tpl-label { grid-column: 1 / -1; margin-bottom: -4px; }
   .tpl-row.extra { grid-template-columns: 1fr; }
 }
+.sugg-list { display: grid; gap: 6px; }
+.sugg-list .check { align-items: flex-start; }
+.sugg-list .check input { margin-top: 4px; }

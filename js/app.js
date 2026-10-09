@@ -28,6 +28,8 @@ import {
   newTemplateSection,
   normalizeSection,
   syncTitle,
+  suggestContacts,
+  applySuggestions,
 } from './templates.js';
 
 const MIN_PASSWORD = 12;
@@ -591,6 +593,8 @@ function renderCustomer(id) {
   } else {
     const open = missingFields(c).length;
     if (open) mainEl.append(h('a', { class: 'open-link', href: `#/offen/${c.id}` }, `${open} offene Punkte – nachtragen`));
+    const sugg = suggestContacts(c);
+    if (sugg.length) mainEl.append(suggestionBox(c, sugg));
   }
 
   for (const cat of cats) {
@@ -1375,6 +1379,37 @@ async function deleteCustomer() {
   go('#/');
 }
 
+// ---------- Kontaktdaten aus Notizen ----------
+
+function suggestionBox(c, sugg) {
+  const checks = sugg.map(() => h('input', { type: 'checkbox', checked: true }));
+  return h(
+    'div',
+    { class: 'version-banner' },
+    h('div', {}, h('b', {}, `${sugg.length} Angaben in den Notizen gefunden`), ' – in die passenden Felder übernehmen?'),
+    h(
+      'div',
+      { class: 'sugg-list' },
+      sugg.map((x, i) =>
+        h('label', { class: 'check' }, checks[i], h('span', {}, h('b', {}, `${x.owner} · ${x.label}: `), x.value, h('span', { class: 'muted small' }, ` (aus „${x.source}“)`))),
+      ),
+    ),
+    h(
+      'button',
+      {
+        class: 'btn primary',
+        onclick: async () => {
+          const chosen = sugg.filter((_, i) => checks[i].checked);
+          if (!chosen.length) return;
+          await state.session.commitCustomers([applySuggestions(c, chosen)]);
+          toast(`${chosen.length} Angaben übernommen – die Notizen bleiben unverändert`);
+        },
+      },
+      'Übernehmen',
+    ),
+  );
+}
+
 // ---------- Offene Punkte ----------
 
 function renderOpen(customerId, { embedded = false } = {}) {
@@ -1855,6 +1890,33 @@ function renderSettings() {
               },
             },
             'Jetzt umstellen',
+          ),
+        );
+      })(),
+      (() => {
+        const found = liveCustomers(s.data)
+          .filter((c) => !needsMigration(c))
+          .map((c) => [c, suggestContacts(c)])
+          .filter(([, x]) => x.length);
+        const n = found.reduce((k, [, x]) => k + x.length, 0);
+        if (!n) return null;
+        return h(
+          'div',
+          { class: 'version-banner' },
+          h('div', {}, h('b', {}, `${n} Kontaktangaben in alten Notizen gefunden`), ` bei ${found.length} Kunden (${found.map(([c]) => c.name).join(', ')}).`),
+          h('div', { class: 'small' }, 'Telefonnummern, Adressen und UID werden nur in leere Felder eingetragen. Die Notizen bleiben unverändert, der vorherige Stand liegt im Verlauf.'),
+          h(
+            'button',
+            {
+              class: 'btn primary',
+              onclick: async () => {
+                if (!confirm(`${n} Angaben bei ${found.length} Kunden übernehmen?`)) return;
+                await s.commitCustomers(found.map(([c, x]) => applySuggestions(c, x)));
+                toast(`${n} Angaben übernommen`);
+                render();
+              },
+            },
+            'Alle übernehmen',
           ),
         );
       })(),
