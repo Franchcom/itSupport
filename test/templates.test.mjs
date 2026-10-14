@@ -71,6 +71,10 @@ test('Umstellung ordnet zu und verliert keinen Wert', () => {
 test('Offene Punkte: Pflichtfelder fehlen, optionale und "gibt es nicht" zaehlen nicht', () => {
   const p = newTemplateSection('person', { name: 'A', email: 'a@b.at' });
   const c = { sections: [p] };
+  // Ohne Geraet stehen AnyDesk-ID und -Passwort trotzdem als offen da …
+  assert.deepEqual(missingFields(c).slice(0, 2).map((x) => [x.field.key, !!x.placeholder]), [['anydesk', true], ['anydeskpw', true]]);
+  // … ausser der Kunde ist als "keine Geraete" markiert.
+  c.noGeraet = true;
   const keys = missingFields(c).map((x) => x.field.key);
   assert.deepEqual(keys, ['m365pw', 'winuser', 'winpw', 'appleid', 'applepw']);
   p.entries.find((e) => e.field === 'appleid').na = true;

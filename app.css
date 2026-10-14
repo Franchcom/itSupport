@@ -262,3 +262,7 @@ input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appe
 .sugg-list { display: grid; gap: 6px; }
 .sugg-list .check { align-items: flex-start; }
 .sugg-list .check input { margin-top: 4px; }
+.card-tools { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.btn.mini { width: 32px; min-width: 32px; min-height: 32px; margin: -6px -6px -6px 0; }
+.btn.mini svg { width: 17px; height: 17px; }
+.card.placeholder { border-style: dashed; }

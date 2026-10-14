@@ -37,6 +37,7 @@ const REVEAL_MS = 20000;
 const CLIPBOARD_CLEAR_MS = 30000;
 
 const state = {
+  editFocus: null, // { add: 'geraet' } oder { sectionId } – wohin "Bearbeiten" springen soll
   session: null,
   query: '',
   tab: pref('tab', 'kunden'),
@@ -526,7 +527,8 @@ function renderCustomer(id) {
     mainEl.append(h('p', { class: 'empty' }, 'Kunde nicht gefunden. ', h('a', { href: '#/' }, 'Zur Übersicht')));
     return;
   }
-  const cats = CATEGORIES.filter((cat) => c.sections.some((s) => s.category === cat));
+  const showDevicePlaceholder = !needsMigration(c) && !c.noGeraet && !c.sections.some((s) => s.type === 'geraet');
+  const cats = CATEGORIES.filter((cat) => c.sections.some((s) => s.category === cat) || (cat === 'Geräte' && showDevicePlaceholder));
   const others = c.sections.filter((s) => !CATEGORIES.includes(s.category));
   const images = c.attachments || [];
 
@@ -600,6 +602,7 @@ function renderCustomer(id) {
   for (const cat of cats) {
     mainEl.append(h('h2', { class: 'cat', id: `cat-${CATEGORIES.indexOf(cat)}` }, cat));
     for (const s of c.sections.filter((x) => x.category === cat)) mainEl.append(sectionCard(c, s));
+    if (cat === 'Geräte' && showDevicePlaceholder) mainEl.append(devicePlaceholder(c));
   }
   for (const s of others) mainEl.append(sectionCard(c, s));
   if (images.length) {
@@ -669,9 +672,42 @@ function sectionCard(c, raw) {
         'h3',
         {},
         h('span', {}, s.title || t.label),
-        t && h('span', { class: 'muted small' }, [t.label !== s.title ? t.label : '', open ? `${open} offen` : ''].filter(Boolean).join(' · ')),
+        h(
+          'span',
+          { class: 'card-tools' },
+          t && h('span', { class: 'muted small' }, [t.label !== s.title ? t.label : '', open ? `${open} offen` : ''].filter(Boolean).join(' · ')),
+          h('button', { class: 'btn ghost icon mini', 'aria-label': `${s.title || 'Bereich'} bearbeiten`, onclick: () => editCustomer(c.id, { sectionId: s.id }) }, icon('edit')),
+        ),
       ),
     s.entries.length ? s.entries.map((e) => entryRow(c, s, e)) : h('div', { class: 'entry muted small' }, 'Leer'),
+  );
+}
+
+function devicePlaceholder(c) {
+  return h(
+    'div',
+    { class: 'card placeholder' },
+    h('h3', {}, h('span', {}, 'Gerät'), h('span', { class: 'muted small' }, 'noch keines erfasst')),
+    ['AnyDesk-ID', 'AnyDesk-Passwort'].map((label) =>
+      h('div', { class: 'entry' }, h('div', { class: 'entry-main' }, h('div', { class: 'entry-label' }, label), h('div', { class: 'entry-value empty-missing' }, 'fehlt – bitte nachtragen'))),
+    ),
+    h(
+      'div',
+      { class: 'bar', style: 'padding:10px 14px' },
+      h('button', { class: 'btn primary', onclick: () => editCustomer(c.id, { add: 'geraet' }) }, icon('plus'), 'AnyDesk eintragen'),
+      h(
+        'button',
+        {
+          class: 'btn',
+          onclick: async () => {
+            if (!confirm(`„${c.name}“ hat keine eigenen Geräte? Die Geräte-Karte wird dann nicht mehr angezeigt.`)) return;
+            await state.session.commitCustomers([{ ...structuredClone(c), noGeraet: true }]);
+            toast('Gespeichert');
+          },
+        },
+        'Keine Geräte',
+      ),
+    ),
   );
 }
 
@@ -903,6 +939,28 @@ async function renderVersion(id, vid) {
 
 // ---------- Bearbeiten ----------
 
+// Neue Vorlagen-Karte an passender Stelle einfuegen (hinter Karten gleicher Art).
+function insertTemplate(d, type, values = {}) {
+  const sec = newTemplateSection(type, type === 'firma' ? { name: d.name, ...values } : values);
+  const rank = (x) => (x.type ? TEMPLATE_ORDER.indexOf(x.type) : 99);
+  let at = d.sections.length;
+  for (let i = d.sections.length - 1; i >= 0; i--) {
+    if (rank(d.sections[i]) <= rank(sec)) {
+      at = i + 1;
+      break;
+    }
+    at = i;
+  }
+  d.sections.splice(at, 0, sec);
+  return sec;
+}
+
+function editCustomer(id, focus) {
+  state.editFocus = focus || null;
+  state.draft = null;
+  go(`#/k/${id}/bearbeiten`);
+}
+
 function renderEdit(id) {
   const user = state.session.user;
   const key = id || 'neu';
@@ -920,6 +978,35 @@ function renderEdit(id) {
   const d = state.draft;
   const isNew = !d._for;
   const rerender = () => render();
+  let focusId = null;
+  let focusField = null;
+  if (state.editFocus) {
+    const f = state.editFocus;
+    state.editFocus = null;
+    if (f.add) {
+      const sec = insertTemplate(d, f.add);
+      sec._auto = true;
+      focusId = sec.id;
+      focusField = f.add === 'geraet' ? 'anydesk' : null;
+    } else if (f.sectionId) {
+      focusId = f.sectionId;
+      focusField = f.field || null;
+    }
+  }
+  // Jeder Kunde hat eine Geraete-Karte zum Eintragen von AnyDesk; bleibt sie leer, wird sie nicht gespeichert.
+  if (!d.noGeraet && !d._noAuto && !d.sections.some((x) => x.type === 'geraet')) {
+    const sec = insertTemplate(d, 'geraet');
+    sec._auto = true;
+  }
+  if (focusId) {
+    setTimeout(() => {
+      const card = mainEl.querySelector(`[data-sid="${focusId}"]`);
+      if (!card) return;
+      card.scrollIntoView({ block: 'center' });
+      const inp = (focusField && card.querySelector(`[data-field="${focusField}"]`)) || card.querySelector('input.inp:not([disabled])');
+      inp?.focus();
+    }, 0);
+  }
 
   const nameInput = h('input', { class: 'inp', value: d.name, placeholder: 'z. B. Muster GmbH', oninput: (e) => (d.name = e.target.value) });
   mainEl.append(
@@ -938,12 +1025,52 @@ function renderEdit(id) {
     ),
   );
 
+  function addBar() {
+    return h(
+      'div',
+      { class: 'bar add-bar' },
+      TEMPLATE_ORDER.filter((type) => !(TEMPLATES[type].single && d.sections.some((x) => x.type === type))).map((type) =>
+        h(
+          'button',
+          {
+            class: 'btn',
+            onclick: () => {
+              const sec = insertTemplate(d, type);
+              rerender();
+              setTimeout(() => {
+                const card = mainEl.querySelector(`[data-sid="${sec.id}"]`);
+                card?.scrollIntoView({ block: 'center' });
+                card?.querySelector('input.inp')?.focus();
+              }, 0);
+            },
+          },
+          icon('plus'),
+          TEMPLATES[type].label,
+        ),
+      ),
+      h(
+        'button',
+        {
+          class: 'btn',
+          onclick: () => {
+            d.sections.push(newSection('', 'Notizen'));
+            rerender();
+          },
+        },
+        icon('plus'),
+        'Freier Bereich',
+      ),
+    );
+  }
+
+  mainEl.append(h('div', { class: 'muted small', style: 'margin:4px 0 6px' }, 'Hinzufügen:'), addBar());
+
   function templateEditCard(s, si) {
     normalizeSection(s);
     const t = TEMPLATES[s.type];
     const card = h(
       'div',
-      { class: 'edit-sec tpl' },
+      { class: 'edit-sec tpl', 'data-sid': s.id },
       h(
         'div',
         { class: 'tpl-head' },
@@ -955,7 +1082,8 @@ function renderEdit(id) {
             class: 'btn danger icon',
             'aria-label': `${t.label} entfernen`,
             onclick: () => {
-              if (!confirm(`${t.label} „${s.title}“ entfernen? (bleibt im Verlauf erhalten)`)) return;
+              if (!s._auto && !confirm(`${t.label} „${s.title}“ entfernen? (bleibt im Verlauf erhalten)`)) return;
+              if (s.type === 'geraet') d._noAuto = true;
               d.sections.splice(si, 1);
               rerender();
             },
@@ -969,6 +1097,7 @@ function renderEdit(id) {
       if (fd) {
         const isTitle = fd.key === t.titleField;
         const valueInp = h('input', {
+          'data-field': fd.key,
           class: `inp${fd.secret || fd.kind !== 'text' ? ' mono' : ''}`,
           value: e.value,
           placeholder: e.na ? 'gibt es nicht' : fd.optional ? 'optional' : '',
@@ -1277,48 +1406,7 @@ function renderEdit(id) {
   mainEl.append(imgSec);
 
   mainEl.append(
-    h(
-      'div',
-      { class: 'bar' },
-      TEMPLATE_ORDER.filter((type) => !(TEMPLATES[type].single && d.sections.some((x) => x.type === type))).map((type) =>
-        h(
-          'button',
-          {
-            class: 'btn',
-            onclick: () => {
-              const sec = newTemplateSection(type, type === 'firma' ? { name: d.name } : {});
-              // An passender Stelle einfuegen: hinter der letzten Karte gleicher Art bzw. Reihenfolge.
-              const rank = (x) => (x.type ? TEMPLATE_ORDER.indexOf(x.type) : 99);
-              let at = d.sections.length;
-              for (let i = d.sections.length - 1; i >= 0; i--) {
-                if (rank(d.sections[i]) <= rank(sec)) {
-                  at = i + 1;
-                  break;
-                }
-                at = i;
-              }
-              d.sections.splice(at, 0, sec);
-              rerender();
-              setTimeout(() => mainEl.querySelectorAll('.edit-sec')[at]?.querySelector('input')?.focus(), 0);
-            },
-          },
-          icon('plus'),
-          TEMPLATES[type].label,
-        ),
-      ),
-      h(
-        'button',
-        {
-          class: 'btn',
-          onclick: () => {
-            d.sections.push(newSection('', 'Notizen'));
-            rerender();
-          },
-        },
-        icon('plus'),
-        'Freier Bereich',
-      ),
-    ),
+    addBar(),
     h(
       'div',
       { class: 'bar sticky-bar' },
@@ -1347,6 +1435,10 @@ async function saveDraft() {
   const clean = structuredClone(d);
   delete clean._for;
   delete clean._key;
+  // Automatisch angebotene, aber leer gelassene Karten nicht speichern.
+  clean.sections = clean.sections.filter((x) => !(x._auto && !x.entries.some((e) => String(e.value || '').trim() || e.na)));
+  for (const x of clean.sections) delete x._auto;
+  delete clean._noAuto;
   clean.attachments = (clean.attachments || []).map((a) => ({ ...a, title: (a.title || '').trim(), group: (a.group || '').trim() }));
   clean.sections = clean.sections
     .map((s) => {
@@ -1488,7 +1580,15 @@ function renderOpen(customerId, { embedded = false } = {}) {
             { class: 'list-item' },
             h(
               'a',
-              { class: 'grow', href: `#/k/${c.id}/bearbeiten`, style: 'text-decoration:none;color:inherit' },
+              {
+                class: 'grow',
+                href: `#/k/${c.id}/bearbeiten`,
+                style: 'text-decoration:none;color:inherit',
+                onclick: (ev) => {
+                  ev.preventDefault();
+                  editCustomer(c.id, it.placeholder ? { add: 'geraet' } : { sectionId: it.section.id, field: it.field.key });
+                },
+              },
               h('div', { class: 'title' }, it.field.label),
               h('div', { class: 'sub' }, `${TEMPLATES[it.type].label}${it.section.title && it.section.title !== TEMPLATES[it.type].label ? ` „${it.section.title}“` : ''}`),
             ),
@@ -1498,6 +1598,12 @@ function renderOpen(customerId, { embedded = false } = {}) {
                 class: 'btn small-btn',
                 onclick: async () => {
                   const next = structuredClone(c);
+                  if (it.placeholder) {
+                    next.noGeraet = true;
+                    await state.session.commitCustomers([next]);
+                    toast('Als „keine Geräte“ markiert');
+                    return;
+                  }
                   const e = next.sections.find((x) => x.id === it.section.id)?.entries.find((x) => x.id === it.entry.id);
                   if (!e) return;
                   e.na = true;

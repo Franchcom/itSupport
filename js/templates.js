@@ -157,6 +157,13 @@ export function syncTitle(sec) {
 // Offene Punkte: leere Pflichtfelder, die nicht als "gibt es nicht" markiert sind.
 export function missingFields(customer) {
   const out = [];
+  // Noch kein Geraet erfasst: AnyDesk-Felder trotzdem als offen fuehren.
+  if (!customer.noGeraet && (customer.sections || []).some((x) => x.type) && !customer.sections.some((x) => x.type === 'geraet')) {
+    const placeholder = { id: null, type: 'geraet', title: 'Gerät', entries: [] };
+    for (const key of ['anydesk', 'anydeskpw']) {
+      out.push({ section: placeholder, entry: null, field: TEMPLATES.geraet.fields.find((x) => x.key === key), type: 'geraet', placeholder: true });
+    }
+  }
   for (const sec of customer.sections || []) {
     const t = TEMPLATES[sec.type];
     if (!t) continue;
