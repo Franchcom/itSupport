@@ -185,6 +185,8 @@ export function search(data, query, limit = 60) {
       for (const e of s.entries) {
         const label = fold(e.label);
         const value = fold(e.value);
+        // Leere Felder nur zeigen, wenn gezielt nach ihrer Bezeichnung gesucht wird.
+        if (!value.trim() && !words.every((w) => label.includes(w))) continue;
         const hay = `${cName} ${sTitle} ${fold(s.category)} ${label} ${value} ${fold(e.note)}`;
         if (!words.every((w) => hay.includes(w))) continue;
         let score = 0;

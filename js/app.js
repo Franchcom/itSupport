@@ -160,8 +160,9 @@ function findCustomer(id) {
   return state.session?.data.customers.find((c) => c.id === id && !c.deleted);
 }
 
+// Nur ausgefuellte Eintraege zaehlen (leere Vorlagenfelder nicht).
 function countEntries(c) {
-  return c.sections.reduce((n, s) => n + s.entries.length, 0);
+  return c.sections.reduce((n, s) => n + s.entries.filter((e) => String(e.value || '').trim()).length, 0);
 }
 
 function fmtTime(d) {
@@ -287,7 +288,7 @@ function updatePill() {
 
 // ---------- Eintrag (Anzeige) ----------
 
-function entryRow(c, s, e, { context = false, badge = '' } = {}) {
+function entryRow(c, s, e, { context = false, badge = '', contextSectionOnly = false } = {}) {
   const isRemote = e.kind === 'anydesk' || e.kind === 'teamviewer';
   const revealed = state.revealed.has(e.id);
   const fd = s && fieldDef(s, e);
@@ -362,7 +363,7 @@ function entryRow(c, s, e, { context = false, badge = '' } = {}) {
         h(
           'a',
           { class: 'entry-ctx', href: `#/k/${c.id}`, onclick: () => clearQuery() },
-          [c.name, s.title].filter(Boolean).join(' · '),
+          (contextSectionOnly ? [s.title] : [c.name, s.title]).filter(Boolean).join(' · ') || c.name,
         ),
       (label || badge) && h('div', { class: 'entry-label' }, label, badge && h('span', { class: 'badge' }, badge)),
       valueEl,
@@ -478,27 +479,44 @@ function renderResults() {
     mainEl.append(h('p', { class: 'empty' }, `Nichts gefunden für „${state.query.trim()}“.`));
     return;
   }
-  const customerHits = hits.filter((x) => !x.entry);
-  const entryHits = hits.filter((x) => x.entry);
-  if (customerHits.length) {
+  // Nach Kunde gruppieren (Reihenfolge der besten Treffer), oben jeweils der Kunde selbst.
+  const groups = new Map();
+  for (const hit of hits) {
+    if (!groups.has(hit.customer.id)) groups.set(hit.customer.id, { customer: hit.customer, entries: [] });
+    if (hit.entry) groups.get(hit.customer.id).entries.push(hit);
+  }
+  for (const { customer: c, entries } of groups.values()) {
+    const noDevice = !needsMigration(c) && !c.noGeraet && !c.sections.some((x) => x.type === 'geraet');
     mainEl.append(
       h(
         'div',
         { class: 'card' },
-        customerHits.map(({ customer: c }) =>
+        h(
+          'div',
+          { class: 'list-item result-head' },
           h(
             'a',
-            { class: 'list-item', href: `#/k/${c.id}`, onclick: () => clearQuery() },
-            h('div', { class: 'grow' }, h('div', { class: 'title' }, c.name), h('div', { class: 'sub' }, `${countEntries(c)} Einträge`)),
-            h('span', { class: 'chev' }, icon('chev')),
+            { class: 'grow', href: `#/k/${c.id}`, onclick: () => clearQuery(), style: 'text-decoration:none;color:inherit' },
+            h('div', { class: 'title' }, c.name),
+            h('div', { class: 'sub' }, [`${countEntries(c)} Einträge`, noDevice ? 'noch kein Gerät' : ''].filter(Boolean).join(' · ')),
           ),
+          noDevice &&
+            h(
+              'button',
+              {
+                class: 'btn small-btn',
+                onclick: () => {
+                  clearQuery();
+                  editCustomer(c.id, { add: 'geraet' });
+                },
+              },
+              icon('plus'),
+              'AnyDesk',
+            ),
+          h('a', { class: 'chev', href: `#/k/${c.id}`, onclick: () => clearQuery(), 'aria-label': `${c.name} öffnen` }, icon('chev')),
         ),
+        entries.map(({ section, entry }) => entryRow(c, section, entry, { context: true, contextSectionOnly: true })),
       ),
-    );
-  }
-  if (entryHits.length) {
-    mainEl.append(
-      h('div', { class: 'card' }, entryHits.map(({ customer, section, entry }) => entryRow(customer, section, entry, { context: true }))),
     );
   }
 }

@@ -266,3 +266,5 @@ input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; appe
 .btn.mini { width: 32px; min-width: 32px; min-height: 32px; margin: -6px -6px -6px 0; }
 .btn.mini svg { width: 17px; height: 17px; }
 .card.placeholder { border-style: dashed; }
+.result-head { background: var(--surface-2); }
+.result-head .title { font-size: 16px; }
